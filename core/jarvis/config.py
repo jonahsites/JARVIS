@@ -30,7 +30,9 @@ class Secrets(BaseSettings):
 
     notion_token: str = ""
     openrouter_api_key: str = ""
-    openrouter_model: str = "anthropic/claude-sonnet-4.5"
+    # Free auto-router that filters for tool-calling support. Rate limited;
+    # JARVIS falls back to the local model when it runs out.
+    openrouter_model: str = "openrouter/free"
 
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:8b"

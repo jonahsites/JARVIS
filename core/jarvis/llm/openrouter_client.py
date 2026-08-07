@@ -1,4 +1,11 @@
-"""Escalation path. Used when the local 8B isn't the right tool for the job."""
+"""Escalation path. Used when the local model isn't the right tool for the job.
+
+Worth knowing if you're on the free tier (`openrouter/free`): it's rate limited
+to roughly 20 requests a minute and 200 a day, and not every free model handles
+tool calling well. Both failure modes are treated the same way — log it and let
+the agent fall back to the local model, which is always available. A slower
+answer beats no answer.
+"""
 
 from __future__ import annotations
 
@@ -76,10 +83,28 @@ class OpenRouterClient:
 
     async def chat(self, messages: list[dict[str, Any]],
                    tools: list[dict[str, Any]] | None = None) -> ChatResult:
-        response = await self._get().chat.completions.create(
-            model=self.model, messages=self._render(messages), tools=tools or None,
-            temperature=0.4, max_tokens=800,
-        )
+        try:
+            response = await self._get().chat.completions.create(
+                model=self.model, messages=self._render(messages),
+                tools=tools or None, temperature=0.4, max_tokens=800,
+            )
+        except Exception as exc:
+            # Raised straight through so the agent's escalation logic drops
+            # back to the local model. Logged distinctly because "you're out of
+            # free requests" and "the model is broken" need different fixes.
+            text = str(exc)
+            if "429" in text or "rate" in text.lower():
+                log.warning("openrouter rate limited (free tier is ~20/min, "
+                            "~200/day) — falling back to the local model")
+            elif "404" in text or "not found" in text.lower():
+                log.warning("openrouter model %r not found — check "
+                            "OPENROUTER_MODEL in .env", self.model)
+            else:
+                log.warning("openrouter failed: %s", text[:200])
+            raise
+
+        if not response.choices:
+            raise RuntimeError("openrouter returned no choices")
 
         choice = response.choices[0].message
         calls: list[ToolCall] = []

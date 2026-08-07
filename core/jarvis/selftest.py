@@ -233,9 +233,46 @@ async def test_llm() -> bool:
         _bad(f"Ollama not usable at {secrets.ollama_host}",
              f"ollama serve  &&  ollama pull {secrets.ollama_model}")
     if cloud_ok:
-        _ok(f"OpenRouter key set ({secrets.openrouter_model})")
+        # A present key proves nothing — free models vary in whether they
+        # handle tool calling at all, and that's what escalation needs.
+        probe = [
+            {"role": "user", "content": "What is the weather in Paris? Use the tool."}
+        ]
+        probe_tool = [{
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Current weather for a city.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            },
+        }]
+        try:
+            started = time.monotonic()
+            result = await router.cloud.chat(probe, tools=probe_tool)
+            elapsed = time.monotonic() - started
+            if result.wants_tools:
+                _ok(f"OpenRouter works and supports tool calling "
+                    f"({secrets.openrouter_model}, {elapsed:.1f}s)")
+            else:
+                _warn(f"OpenRouter answered but did not call the tool — "
+                      f"{secrets.openrouter_model} may not support tool calling. "
+                      f"Escalation will be unreliable.")
+        except Exception as exc:
+            text = str(exc)
+            if "429" in text:
+                _warn("OpenRouter rate limited right now (free tier is ~20/min, "
+                      "~200/day) — JARVIS falls back to local when this happens")
+            else:
+                _bad(f"OpenRouter key set but the call failed: {text[:160]}",
+                     "Check OPENROUTER_MODEL in .env is a real model id")
+                cloud_ok = False
     else:
-        _warn("no OpenRouter key — complex requests stay on the 8B model")
+        _warn("no OpenRouter key — complex requests stay on the local model")
+
     if not local_ok and not cloud_ok:
         return False
 
