@@ -94,8 +94,10 @@ class VoicePipeline:
         await asyncio.gather(
             asyncio.to_thread(self.wake.load),
             asyncio.to_thread(self.vad.load),
-            asyncio.to_thread(self.stt.load),
-            asyncio.to_thread(self.tts.load),
+            # Not to_thread: MLX pins its Metal stream to the loading thread,
+            # and transcription has to happen on that same one.
+            self.stt.load_async(),
+            self.tts.load_async(),
         )
         log.info("speech models ready in %.1fs", time.monotonic() - started)
 
@@ -140,6 +142,8 @@ class VoicePipeline:
         if self._stream is not None:
             self._stream.stop()
             self._stream.close()
+        self.stt.close()
+        self.tts.close()
 
     # ---- the loop --------------------------------------------------------
 
@@ -252,7 +256,7 @@ class VoicePipeline:
         await self._state.transition(AgentState.THINKING)
         started = time.monotonic()
 
-        transcript = await asyncio.to_thread(self.stt.transcribe, utterance)
+        transcript = await self.stt.transcribe_async(utterance)
         if not transcript:
             await self._state.transition(AgentState.IDLE)
             return

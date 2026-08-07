@@ -212,6 +212,18 @@ Everything re-derives from it, forwards and backwards.
 
 ---
 
+## Known gotcha
+
+**`RuntimeError: There is no Stream(gpu, 1) in current thread`** — MLX binds
+its Metal stream to whichever thread created it, so the model has to be loaded
+and used on the same one. `STT` and `TTS` each own a single-worker thread pool
+for exactly this; if you add another GPU-backed model, give it the same
+treatment rather than reaching for `asyncio.to_thread`.
+
+Worth knowing because it hides well: sequential `asyncio.to_thread` calls reuse
+one pooled thread, so this works fine in isolated tests and only breaks in the
+daemon, where models load concurrently and land on different threads.
+
 ## When something breaks
 
 `var/jarvis.log` has everything it thought, including every tool call and every

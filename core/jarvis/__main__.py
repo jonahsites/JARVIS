@@ -42,7 +42,7 @@ def say(text: str) -> None:
 
     async def _speak() -> None:
         tts = TTS(config.voice.tts_voice, config.voice.tts_speed)
-        await asyncio.to_thread(tts.load)
+        await tts.load_async()
         await tts.speak(text)
 
     asyncio.run(_speak())

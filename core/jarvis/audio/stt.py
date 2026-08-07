@@ -25,9 +25,11 @@ CanaryEngine if you ever move to an NVIDIA box.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Protocol
 
@@ -113,10 +115,19 @@ class STT:
 
     A missing optional package shouldn't stop JARVIS starting — it should just
     quietly cost you some accuracy, and say so in the log.
+
+    Everything runs on one dedicated thread. MLX binds its Metal stream to the
+    thread that created it, so loading the model on one thread and transcribing
+    on another fails with "There is no Stream(gpu, 1) in current thread". That's
+    easy to miss, because asyncio.to_thread reuses a pooled thread when calls
+    are sequential — so it works in isolation and breaks in the daemon, where
+    the models are loaded concurrently and land on different threads.
     """
 
     def __init__(self, engine: str = "qwen", qwen_model: str = "",
                  parakeet_model: str = "", whisper_model: str = ""):
+        # max_workers=1 is the whole point: same thread every time, forever.
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="jarvis-stt")
         qwen = lambda: QwenASREngine(qwen_model or "Qwen/Qwen3-ASR-0.6B")  # noqa: E731
         parakeet = lambda: ParakeetEngine(  # noqa: E731
             parakeet_model or "mlx-community/parakeet-tdt-0.6b-v2"
@@ -162,3 +173,18 @@ class STT:
             audio.size / SAMPLE_RATE, (time.monotonic() - started) * 1000,
         )
         return text
+
+    # ---- async wrappers --------------------------------------------------
+    # Always use these rather than asyncio.to_thread, which picks an arbitrary
+    # pooled thread and breaks MLX's stream affinity.
+
+    async def load_async(self) -> None:
+        await asyncio.get_running_loop().run_in_executor(self._pool, self.load)
+
+    async def transcribe_async(self, audio: np.ndarray) -> str:
+        return await asyncio.get_running_loop().run_in_executor(
+            self._pool, self.transcribe, audio
+        )
+
+    def close(self) -> None:
+        self._pool.shutdown(wait=False)

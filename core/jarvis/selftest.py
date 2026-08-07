@@ -103,7 +103,7 @@ async def test_tts() -> bool:
     tts = TTS(config.voice.tts_voice, config.voice.tts_speed)
     try:
         started = time.monotonic()
-        await asyncio.to_thread(tts.load)
+        await tts.load_async()
         _ok(f"Kokoro loaded in {time.monotonic() - started:.1f}s "
             f"(voice {config.voice.tts_voice})")
     except Exception as exc:
@@ -130,7 +130,7 @@ async def test_stt(seconds: float = 5.0) -> bool:
               config.voice.stt_model, config.voice.whisper_model)
     try:
         started = time.monotonic()
-        await asyncio.to_thread(stt.load)
+        await stt.load_async()
         _ok(f"engine loaded in {time.monotonic() - started:.1f}s")
     except Exception as exc:
         _bad(f"no engine could load: {exc}",
@@ -144,7 +144,7 @@ async def test_stt(seconds: float = 5.0) -> bool:
 
     try:
         started = time.monotonic()
-        text = await asyncio.to_thread(stt.transcribe, recording[:, 0])
+        text = await stt.transcribe_async(recording[:, 0])
         elapsed = time.monotonic() - started
     except Exception as exc:
         _bad(f"transcription failed: {exc}")

@@ -18,6 +18,7 @@ import asyncio
 import logging
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 import numpy as np
@@ -37,12 +38,23 @@ class TTS:
         self._pipeline = None
         self._stop = threading.Event()
         self._playing = threading.Event()
+        # One dedicated thread, same reason as STT: the model is loaded once and
+        # used many times, and GPU-backed frameworks bind state to the thread
+        # that set them up. Also serialises playback, which we want anyway.
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="jarvis-tts")
 
     def load(self) -> None:
         from kokoro import KPipeline
 
         self._pipeline = KPipeline(lang_code="a")  # 'a' = American English
         log.info("tts ready: kokoro (%s @ %.2fx)", self.voice, self.speed)
+
+    async def load_async(self) -> None:
+        await asyncio.get_running_loop().run_in_executor(self._pool, self.load)
+
+    def close(self) -> None:
+        self.stop()
+        self._pool.shutdown(wait=False)
 
     @property
     def is_speaking(self) -> bool:
@@ -61,7 +73,9 @@ class TTS:
         self._stop.clear()
         self._playing.set()
         try:
-            return await asyncio.to_thread(self._speak_blocking, text)
+            return await asyncio.get_running_loop().run_in_executor(
+                self._pool, self._speak_blocking, text
+            )
         finally:
             self._playing.clear()
 
