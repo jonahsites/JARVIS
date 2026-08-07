@@ -76,6 +76,7 @@ class Daemon:
             schedule=self.schedule, observer=self.observer,
             speak=self.pipeline.say,
             assignments_provider=lambda: self._open_assignments,
+            is_busy=lambda: self._in_conversation,
         )
 
         self.onboarding = Onboarding(
@@ -87,6 +88,9 @@ class Daemon:
         self._due_soon: list[str] = []
         self._open_assignments: list = []
         self._tasks: list[asyncio.Task] = []
+        # True while a multi-turn exchange is running (onboarding, a spoken
+        # permission prompt). Keeps proactive speech out of the gaps.
+        self._in_conversation = False
 
     # ---- glue ------------------------------------------------------------
 
@@ -203,7 +207,7 @@ class Daemon:
         self.pipeline.on_listen_start = self.outbox.cancel
 
         # First-use permission prompts are spoken and answerable out loud.
-        self.ledger.ask_aloud = self.pipeline.ask_yes_no
+        self.ledger.ask_aloud = self._ask_aloud
 
         if self.notion.enabled:
             await self._refresh_notion()
@@ -252,12 +256,26 @@ class Daemon:
             # returning is what lets the wake word work during it.
             self._tasks.append(asyncio.create_task(self._first_run()))
 
+    async def _ask_aloud(self, prompt: str) -> bool:
+        """A permission prompt is a two-turn exchange — hold off proactive
+        speech for its duration so nothing cuts in between the question and
+        your answer."""
+        self._in_conversation = True
+        try:
+            return await self.pipeline.ask_yes_no(prompt)
+        finally:
+            self._in_conversation = False
+
     async def _first_run(self) -> None:
         await asyncio.sleep(2)  # let the UI connect so you can see it react
-        await self.pipeline.say(
-            "Hey — first time running, so let me get to know you a bit."
-        )
-        await self.onboarding.run()
+        self._in_conversation = True
+        try:
+            await self.pipeline.say(
+                "Hey — first time running, so let me get to know you a bit."
+            )
+            await self.onboarding.run()
+        finally:
+            self._in_conversation = False
 
     async def stop(self) -> None:
         for task in self._tasks:

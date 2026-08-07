@@ -46,7 +46,12 @@ class ProactiveEngine:
     def __init__(self, *, config: ProactiveConfig, state: StateMachine,
                  memory: Memory, schedule: ScheduleResolver,
                  observer: Observer, speak: Callable[[str], Awaitable[None]],
-                 assignments_provider: Callable[[], list] | None = None):
+                 assignments_provider: Callable[[], list] | None = None,
+                 is_busy: Callable[[], bool] | None = None):
+        # The state machine returns to IDLE between turns of a longer
+        # conversation — during onboarding, for instance — so "not currently
+        # speaking" isn't enough to know it's safe to interrupt.
+        self._is_busy = is_busy or (lambda: False)
         self._config = config
         self._state = state
         self._memory = memory
@@ -74,6 +79,8 @@ class ProactiveEngine:
     def _may_speak(self, now: datetime) -> tuple[bool, str]:
         if not self._config.enabled:
             return False, "disabled"
+        if self._is_busy():
+            return False, "mid-conversation"
         if not self._state.can_interrupt():
             return False, f"busy ({self._state.state.value})"
         if self._in_quiet_hours(now):
