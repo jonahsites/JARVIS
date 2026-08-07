@@ -1,37 +1,44 @@
 """First run — the conversation where JARVIS learns who you are.
 
-You asked for something that goes past name-and-birthday: it should tell you to
-do things, watch you do them, and learn how. That's the DEMONSTRATE steps below.
-When it says "open whatever you write essays in", it watches the frontmost app
-and the tab list, sees you open Google Docs, and stores `essay_app = Google
-Docs`. From then on "open my essay doc" resolves without a guess.
+Two kinds of step, because two kinds of question deserve different interfaces.
 
-Three kinds of step:
+Things you can just say — your name, when you get up, how you like to work —
+are asked out loud. You answer whenever it finishes speaking; no wake word,
+and you can talk over it.
 
-  ASK         a spoken question; the answer is stored as a fact
-  DEMONSTRATE a spoken instruction; JARVIS watches and stores what you did
-  GRANT       offers a capability up front so it doesn't interrupt later
+Things that are fiddly to say — exact app names, URLs — are collected in a form
+instead. JARVIS opens a tab and you type or paste. The earlier version told you
+to go open an app while it watched the frontmost window, which was both slow
+and unreliable: it gave you twenty seconds, guessed from whatever happened to
+come to the front, and couldn't capture a specific link at all.
 
-Everything is skippable — saying "skip" or "I don't know" moves on. It resumes
-where you left off if you quit halfway, so it never restarts from the top.
+Everything is skippable, and progress is saved after each step so quitting
+halfway doesn't start you over.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Literal
 
 from .agent.capabilities import CapabilityLedger
 from .memory.db import Memory
-from .skills import mac
 
 log = logging.getLogger("jarvis.onboarding")
 
-StepKind = Literal["ask", "demonstrate", "grant", "say"]
+StepKind = Literal["ask", "form", "grant", "say"]
 
-SKIP_WORDS = {"skip", "pass", "next", "dunno", "unsure", "later", "nothing"}
+SKIP_WORDS = {"skip", "pass", "next", "dunno", "unsure", "later", "nothing",
+              "no idea", "none"}
+
+
+@dataclass
+class Field:
+    key: str
+    label: str
+    hint: str = ""
+    placeholder: str = ""
 
 
 @dataclass
@@ -40,49 +47,53 @@ class Step:
     prompt: str
     key: str = ""
     capability: str = ""
-    # DEMONSTRATE only: what to watch. "app" reads the frontmost application,
-    # "tab" reads whichever Chrome tab is active.
-    watch: str = "app"
+    title: str = ""
+    fields: list[Field] = field(default_factory=list)
 
 
 STEPS: list[Step] = [
-    Step("say", "Alright — this'll take about three minutes, and it means I "
-                "stop guessing at things. Say skip to any of these and I'll "
-                "move on."),
+    Step("say", "Alright — this'll take a couple of minutes, and it means I "
+                "stop guessing at things. Say skip to anything you'd rather "
+                "not answer, and feel free to talk over me."),
 
-    # --- who you are ---
+    # --- spoken: things that are natural to say ---
     Step("ask", "What should I call you?", key="preferred_name"),
-    Step("ask", "And what should I call myself? Jarvis is fine, or pick "
-                "something else.", key="assistant_name"),
     Step("ask", "What time do you usually get up on a school day?",
          key="wake_time"),
     Step("ask", "What time are you usually done with homework?",
          key="homework_end_time"),
     Step("ask", "Anything I should know about how you like to work? Music on, "
                 "one thing at a time, whatever it is.", key="work_style"),
+    Step("ask", "Is there anything you want me to nag you about?",
+         key="nag_about"),
 
-    # --- learning by watching ---
-    Step("demonstrate",
-         "Now open whatever you use to write essays. I'm watching.",
-         key="essay_app", watch="app"),
-    Step("demonstrate",
-         "Open the app you use for anything with numbers or problem sets.",
-         key="math_app", watch="app"),
-    Step("demonstrate",
-         "Open the site you check for grades or assignments from school.",
-         key="grades_site", watch="tab"),
-    Step("demonstrate",
-         "Open the first thing you open when you sit down to work.",
-         key="first_thing", watch="app"),
-    Step("demonstrate",
-         "Open whatever you put on in the background while you're working.",
-         key="background_app", watch="app"),
-    Step("demonstrate",
-         "Last one — open the site you go to when you're procrastinating. "
-         "No judgement, I just want to know what to close.",
-         key="distraction_site", watch="tab"),
+    # --- form: things that are fiddly to say out loud ---
+    Step(
+        "form",
+        "I've opened a tab — fill in whatever you know and skip the rest. "
+        "App names or links, either works.",
+        title="What do you use for what?",
+        fields=[
+            Field("essay_app", "Writing essays",
+                  "App name or a link", "Google Docs, or a link to your folder"),
+            Field("math_app", "Math and problem sets",
+                  "App name or a link", "Notion, Desmos, a textbook link"),
+            Field("grades_site", "Checking grades",
+                  "Usually a link", "https://..."),
+            Field("first_thing", "First thing you open to start working",
+                  "App name or a link", "Notion"),
+            Field("background_app", "On in the background while you work",
+                  "App name or a link", "Spotify"),
+            Field("distraction_site", "Where you go when you're procrastinating",
+                  "So I know what to close", "youtube.com"),
+            Field("school_portal", "Your school's main site",
+                  "Optional", "https://..."),
+            Field("project_folder", "A project or folder you open a lot",
+                  "Optional", "~/Projects/something"),
+        ],
+    ),
 
-    # --- permissions, offered rather than sprung on you ---
+    # --- permissions, offered rather than sprung on you mid-task ---
     Step("grant", "Okay if I open browser tabs for you?",
          capability="chrome.open_tab"),
     Step("grant", "Okay if I keep track of which tabs you have open?",
@@ -93,31 +104,51 @@ STEPS: list[Step] = [
     Step("grant", "Okay if I add assignments for you?",
          capability="notion.create_assignment"),
     Step("grant", "And okay if I send texts? I'll always read one out before "
-                  "it goes.", capability="messages.send"),
+                  "it goes, so you can stop it.", capability="messages.send"),
 
     Step("say", "That's it. I've got the shape of your day now — just say hey "
                 "Jarvis whenever you need me."),
 ]
+
+# Facts that came from onboarding, cleared by --restart so a re-run is a genuine
+# fresh start rather than a re-confirmation of stale answers.
+def _onboarding_keys() -> list[str]:
+    keys = [s.key for s in STEPS if s.kind == "ask" and s.key]
+    for step in STEPS:
+        if step.kind == "form":
+            keys.extend(f.key for f in step.fields)
+    return keys
+
+
+FormPresenter = Callable[[str, str, list[Field]], Awaitable[dict[str, str]]]
 
 
 class Onboarding:
     def __init__(self, *, memory: Memory, ledger: CapabilityLedger,
                  speak: Callable[[str], Awaitable[None]],
                  ask: Callable[[str], Awaitable[str]],
-                 ask_yes_no: Callable[[str], Awaitable[bool]]):
+                 ask_yes_no: Callable[[str], Awaitable[bool]],
+                 show_form: FormPresenter | None = None):
         self._memory = memory
         self._ledger = ledger
         self._speak = speak
         self._ask = ask
         self._ask_yes_no = ask_yes_no
+        self._show_form = show_form
 
     @property
     def complete(self) -> bool:
         return self._memory.recall("onboarding_complete") == "yes"
 
+    def reset(self) -> None:
+        """Forget everything onboarding taught it, and start from step zero."""
+        for key in [*_onboarding_keys(), "onboarding_complete", "onboarding_step"]:
+            self._memory.execute("DELETE FROM facts WHERE key=?", (key,))
+        log.info("onboarding reset")
+
     async def run(self, *, restart: bool = False) -> None:
         if restart:
-            self._memory.remember("onboarding_step", "0", source="onboarding")
+            self.reset()
 
         start = int(self._memory.recall("onboarding_step") or 0)
         if start:
@@ -151,59 +182,27 @@ class Onboarding:
             if await self._ask_yes_no(step.prompt):
                 self._ledger.grant(step.capability, step.prompt)
 
-        elif step.kind == "demonstrate":
-            await self._demonstrate(step)
+        elif step.kind == "form":
+            await self._collect(step)
 
-    async def _demonstrate(self, step: Step) -> None:
-        """Say the instruction, then watch for what changes."""
-        before_app = await _safe(mac.frontmost_app, "")
-        before_tab = await _current_tab()
-
-        await self._speak(step.prompt)
-
-        # Poll rather than sleep-then-look, so a fast answer isn't kept waiting
-        # and a slow one still gets caught.
-        observed: str | None = None
-        for _ in range(20):  # up to ~20s
-            await asyncio.sleep(1.0)
-
-            if step.watch == "app":
-                current = await _safe(mac.frontmost_app, "")
-                if current and current != before_app and current != "Terminal":
-                    observed = current
-                    break
-            else:
-                current = await _current_tab()
-                if current and current != before_tab:
-                    observed = current
-                    break
-
-        if not observed:
-            await self._speak("Didn't catch that one — moving on.")
+    async def _collect(self, step: Step) -> None:
+        if self._show_form is None:
+            log.warning("no form presenter — skipping %s", step.title)
             return
 
-        self._memory.remember(step.key, observed, source="onboarding")
-        log.info("learned %s = %r (by demonstration)", step.key, observed)
-        await self._speak(f"Got it — {observed}.")
+        await self._speak(step.prompt)
+        values = await self._show_form(step.title, step.prompt, step.fields)
 
+        saved = 0
+        for key, value in values.items():
+            value = (value or "").strip()
+            if not value:
+                continue
+            self._memory.remember(key, value, source="onboarding")
+            saved += 1
 
-async def _safe(fn, default):
-    try:
-        return await fn()
-    except Exception:
-        return default
-
-
-async def _current_tab() -> str:
-    """Host of the active Chrome tab, which is the stable part of a URL."""
-    try:
-        tabs = await mac.list_tabs()
-    except Exception:
-        return ""
-    for tab in tabs:
-        if tab.get("active"):
-            url = tab.get("url") or ""
-            if "://" in url:
-                return url.split("://", 1)[1].split("/", 1)[0]
-            return url
-    return ""
+        log.info("form saved %d of %d fields", saved, len(step.fields))
+        if saved:
+            await self._speak(f"Got it, {saved} thing{'s' if saved != 1 else ''} saved.")
+        else:
+            await self._speak("No problem, we can fill that in later.")

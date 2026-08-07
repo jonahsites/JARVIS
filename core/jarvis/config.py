@@ -75,6 +75,18 @@ class VoiceConfig(BaseModel):
     silence_ms: int = 700
     max_utterance_s: float = 30.0
 
+    # Talk over JARVIS and it stops. The wake word is then only for *starting*
+    # a conversation, never for interrupting or answering.
+    #
+    # Without acoustic echo cancellation the mic hears the speakers, so this
+    # calibrates: the first barge_calibrate_ms of playback establishes an echo
+    # floor, and only sustained sound clearly above it counts as you talking.
+    # Raise the multiplier if it cuts itself off; lower it if it ignores you.
+    barge_in: bool = True
+    barge_in_multiplier: float = 2.8
+    barge_in_ms: int = 320
+    barge_calibrate_ms: int = 450
+
 
 class LLMConfig(BaseModel):
     # "Local first, escalate on complexity" — your choice.

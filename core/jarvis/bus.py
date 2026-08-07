@@ -36,12 +36,14 @@ EV_SPEECH = "speech"                # {text} — the only thing ever spoken alou
 EV_CAPABILITY = "capability"        # {id, title, detail} first-use approval prompt
 EV_PENDING_SEND = "pending_send"    # {id, summary, seconds} 3s cancel window
 EV_TOAST = "toast"                  # {level, text} non-spoken status
+EV_ONBOARD_FORM = "onboard_form"    # {id, title, intro, fields[]} fill this in
 
 # UI -> daemon
 EV_HOTKEY = "hotkey"
 EV_CANCEL = "cancel"
 EV_CAPABILITY_REPLY = "capability_reply"   # {id, granted: bool}
 EV_TEXT_INPUT = "text_input"               # {text} typed instead of spoken
+EV_ONBOARD_SUBMIT = "onboard_submit"       # {id, values: {key: value}}
 
 Handler = Callable[[Event], Awaitable[None]]
 

@@ -10,14 +10,15 @@ from .agent.loop import Agent
 from .agent.registry import Registry
 from .audio.hotkey import GlobalHotkey
 from .audio.pipeline import VoicePipeline
-from .bus import EV_CANCEL, EV_HOTKEY, EV_STATE, EV_TEXT_INPUT, Bus, Event
+from .bus import (EV_CANCEL, EV_HOTKEY, EV_ONBOARD_FORM, EV_ONBOARD_SUBMIT,
+                  EV_STATE, EV_TEXT_INPUT, Bus, Event)
 from .config import JarvisConfig, Secrets
 from .llm.ollama_client import OllamaClient
 from .llm.openrouter_client import OpenRouterClient
 from .llm.prompts import context_block
 from .llm.router import Router
 from .memory.db import Memory
-from .onboarding import Onboarding
+from .onboarding import Field, Onboarding
 from .proactive.engine import ProactiveEngine
 from .skills.message_tools import register_messages
 from .skills.messages import Messages
@@ -32,6 +33,8 @@ from .skills.tools import register_all
 from .state import AgentState, StateMachine
 
 log = logging.getLogger("jarvis.daemon")
+
+UI_PORT = 5173  # where `npm run dev` serves the glob
 
 
 class Daemon:
@@ -83,6 +86,7 @@ class Daemon:
             memory=self.memory, ledger=self.ledger,
             speak=self.pipeline.say, ask=self.pipeline.ask,
             ask_yes_no=self.pipeline.ask_yes_no,
+            show_form=self._show_form,
         )
 
         self._due_soon: list[str] = []
@@ -91,6 +95,7 @@ class Daemon:
         # True while a multi-turn exchange is running (onboarding, a spoken
         # permission prompt). Keeps proactive speech out of the gaps.
         self._in_conversation = False
+        self._pending_form: asyncio.Future[dict[str, str]] | None = None
 
     # ---- glue ------------------------------------------------------------
 
@@ -187,6 +192,49 @@ class Daemon:
         reply = await self.agent.respond(text)
         await self.pipeline.say(reply)
 
+    async def _on_form_submit(self, event: Event) -> None:
+        if self._pending_form and not self._pending_form.done():
+            self._pending_form.set_result(event.payload.get("values") or {})
+
+    async def _show_form(self, title: str, intro: str,
+                         fields: list[Field]) -> dict[str, str]:
+        """Open the UI tab and wait for you to fill it in.
+
+        The tab is opened rather than assumed — this runs on first launch,
+        when it very often isn't open yet.
+        """
+        import uuid
+
+        from .skills import mac
+
+        try:
+            await mac.open_tab(f"http://localhost:{UI_PORT}")
+        except Exception as exc:
+            log.warning("could not open the UI tab (%s) — open "
+                        "http://localhost:%d yourself", exc, UI_PORT)
+
+        request_id = uuid.uuid4().hex
+        future: asyncio.Future[dict[str, str]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending_form = future
+
+        await self.bus.emit(
+            EV_ONBOARD_FORM, id=request_id, title=title, intro=intro,
+            fields=[{"key": f.key, "label": f.label, "hint": f.hint,
+                     "placeholder": f.placeholder} for f in fields],
+        )
+
+        try:
+            # Generous: filling eight fields with real links takes a while and
+            # nothing else is waiting on it.
+            return await asyncio.wait_for(future, timeout=600)
+        except asyncio.TimeoutError:
+            log.info("onboarding form timed out")
+            return {}
+        finally:
+            self._pending_form = None
+
     # ---- lifecycle -------------------------------------------------------
 
     async def start(self) -> None:
@@ -194,6 +242,7 @@ class Daemon:
         self.bus.on(EV_HOTKEY, self._on_bus_hotkey)
         self.bus.on(EV_CANCEL, self._on_cancel)
         self.bus.on(EV_TEXT_INPUT, self._on_text_input)
+        self.bus.on(EV_ONBOARD_SUBMIT, self._on_form_submit)
 
         register_all(self.registry, self.memory, self.schedule, self.ledger)
         register_notion(self.registry, self.assignments, self.notes,
@@ -265,6 +314,7 @@ class Daemon:
             return await self.pipeline.ask_yes_no(prompt)
         finally:
             self._in_conversation = False
+        self._pending_form: asyncio.Future[dict[str, str]] | None = None
 
     async def _first_run(self) -> None:
         await asyncio.sleep(2)  # let the UI connect so you can see it react
@@ -276,6 +326,7 @@ class Daemon:
             await self.onboarding.run()
         finally:
             self._in_conversation = False
+        self._pending_form: asyncio.Future[dict[str, str]] | None = None
 
     async def stop(self) -> None:
         for task in self._tasks:

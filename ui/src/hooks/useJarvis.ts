@@ -10,9 +10,17 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { FormField } from '../components/OnboardingForm';
 import type { JarvisState } from '../lib/globStates';
 
 const BUS_URL = `ws://127.0.0.1:${import.meta.env.VITE_BUS_PORT ?? 8765}`;
+
+export interface OnboardForm {
+  id: string;
+  title: string;
+  intro: string;
+  fields: FormField[];
+}
 
 export interface CapabilityPrompt {
   id: string;
@@ -27,7 +35,9 @@ export interface JarvisSession {
   transcript: string;
   spoken: string;
   capability: CapabilityPrompt | null;
+  onboardForm: OnboardForm | null;
   answerCapability: (granted: boolean) => void;
+  submitOnboarding: (values: Record<string, string>) => void;
   triggerListen: () => void;
   cancel: () => void;
   sendText: (text: string) => void;
@@ -44,6 +54,7 @@ export function useJarvis(): JarvisSession {
   const [transcript, setTranscript] = useState('');
   const [spoken, setSpoken] = useState('');
   const [capability, setCapability] = useState<CapabilityPrompt | null>(null);
+  const [onboardForm, setOnboardForm] = useState<OnboardForm | null>(null);
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}) => {
     if (socket.current?.readyState === WebSocket.OPEN) {
@@ -98,6 +109,14 @@ export function useJarvis(): JarvisSession {
               prompt: payload.prompt,
             });
             break;
+          case 'onboard_form':
+            setOnboardForm({
+              id: payload.id,
+              title: payload.title,
+              intro: payload.intro,
+              fields: payload.fields as FormField[],
+            });
+            break;
         }
       };
     };
@@ -131,6 +150,15 @@ export function useJarvis(): JarvisSession {
     [capability, send],
   );
 
+  const submitOnboarding = useCallback(
+    (values: Record<string, string>) => {
+      if (!onboardForm) return;
+      send('onboard_submit', { id: onboardForm.id, values });
+      setOnboardForm(null);
+    },
+    [onboardForm, send],
+  );
+
   return {
     connected,
     state,
@@ -138,7 +166,9 @@ export function useJarvis(): JarvisSession {
     transcript,
     spoken,
     capability,
+    onboardForm,
     answerCapability,
+    submitOnboarding,
     triggerListen: useCallback(() => send('hotkey'), [send]),
     cancel: useCallback(() => send('cancel'), [send]),
     sendText: useCallback((text: string) => send('text_input', { text }), [send]),

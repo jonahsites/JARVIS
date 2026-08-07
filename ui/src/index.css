@@ -160,3 +160,74 @@ button.yes:hover {
   color: var(--dim);
   margin: 0;
 }
+
+/* onboarding form — shown in place of the old watch-what-you-open step */
+
+.onboard {
+  width: min(34rem, 100%);
+  padding: 1.25rem 1.4rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #0d0f16;
+}
+
+.onboard h2 {
+  margin: 0 0 0.3rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.onboard-intro {
+  margin: 0 0 1rem;
+  font-size: 0.88rem;
+  color: var(--dim);
+}
+
+.onboard-fields {
+  display: grid;
+  gap: 0.7rem;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 0.3rem;
+}
+
+.onboard-field {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.onboard-label {
+  font-size: 0.88rem;
+}
+
+.onboard-hint {
+  font-size: 0.75rem;
+  color: var(--dim);
+}
+
+.onboard-field input {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #070810;
+  color: var(--fg);
+  outline: none;
+}
+
+.onboard-field input:focus {
+  border-color: #2b3242;
+}
+
+.onboard-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.onboard-note {
+  margin: 0.7rem 0 0;
+  font-size: 0.75rem;
+  color: var(--dim);
+}

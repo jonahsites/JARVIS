@@ -68,6 +68,14 @@ class VoicePipeline:
         # Suppresses wake detection while Kokoro is playing, so JARVIS doesn't
         # hear its own voice say "Jarvis" and wake itself up.
         self._muted_until = 0.0
+
+        # Barge-in state. The mic hears the speakers, so the first moments of
+        # playback are used to measure that echo and everything is judged
+        # relative to it.
+        self._echo_samples: list[float] = []
+        self._echo_floor = 0.0
+        self._loud_frames = 0
+        self._speaking_since = 0.0
         # When JARVIS asked *you* something, the next thing you say answers it
         # instead of starting a new request.
         self._awaiting_answer: asyncio.Future[str] | None = None
@@ -135,6 +143,56 @@ class VoicePipeline:
 
     # ---- the loop --------------------------------------------------------
 
+    def _drain(self) -> int:
+        """Throw away buffered mic audio.
+
+        Essential before listening. While JARVIS speaks, the mic keeps
+        capturing — including JARVIS itself through the speakers — and those
+        frames sit in the queue. Without this, the VAD's very first input is a
+        few seconds of JARVIS's own voice, so it "hears" a complete utterance
+        instantly and never waits for you at all.
+        """
+        dropped = 0
+        while not self._frames.empty():
+            try:
+                self._frames.get_nowait()
+                dropped += 1
+            except asyncio.QueueEmpty:
+                break
+        return dropped
+
+    def _check_barge_in(self, rms: float) -> bool:
+        """Are you talking over it?
+
+        Judged against the echo floor measured at the start of this utterance,
+        because absolute thresholds don't survive different speaker volumes,
+        different mics, or a room with any noise in it.
+        """
+        if not self._config.voice.barge_in:
+            return False
+
+        elapsed_ms = (time.monotonic() - self._speaking_since) * 1000
+
+        # Calibrate first: whatever the mic hears now is JARVIS itself.
+        if elapsed_ms < self._config.voice.barge_calibrate_ms:
+            self._echo_samples.append(rms)
+            return False
+
+        if self._echo_floor == 0.0:
+            baseline = (float(np.median(self._echo_samples))
+                        if self._echo_samples else 0.0)
+            # A floor, so a silent room doesn't make every whisper a barge-in.
+            self._echo_floor = max(baseline, 0.004)
+            log.debug("barge-in floor %.4f", self._echo_floor)
+
+        if rms > self._echo_floor * self._config.voice.barge_in_multiplier:
+            self._loud_frames += 1
+        else:
+            self._loud_frames = 0
+
+        needed = max(1, int(self._config.voice.barge_in_ms / 80))  # 80 ms/frame
+        return self._loud_frames >= needed
+
     async def _run(self) -> None:
         while True:
             chunk = await self._frames.get()
@@ -148,10 +206,19 @@ class VoicePipeline:
                 if utterance is not None:
                     self._listening = False
                     if utterance.size == 0:
-                        log.info("woke but heard nothing")
+                        log.info("heard nothing")
                         await self._state.transition(AgentState.IDLE)
                     else:
                         asyncio.create_task(self._handle(utterance))
+                continue
+
+            # Speaking: watch for you cutting in. No wake word needed —
+            # interrupting a person doesn't require saying their name first.
+            if self._state.state is AgentState.SPEAKING and self.tts.is_speaking:
+                if self._check_barge_in(rms):
+                    log.info("barge-in (%.4f over floor %.4f)", rms, self._echo_floor)
+                    self.tts.stop()
+                    await self.begin_listening()
                 continue
 
             # Idle: only the wake word runs. Nothing is buffered or stored.
@@ -161,16 +228,22 @@ class VoicePipeline:
                     await self.begin_listening()
 
     async def begin_listening(self) -> None:
-        """Wake word fired, or you hit the hotkey."""
+        """Wake word, hotkey, barge-in, or answering a question it asked."""
         if self._listening:
             return
-        # Talking over JARVIS cuts it off — same as interrupting a person.
         if self.tts.is_speaking:
             self.tts.stop()
         if self.on_listen_start is not None:
             self.on_listen_start()
+
         self.vad.reset()
         self.wake.reset()
+        # Everything captured up to now is either JARVIS's own voice or the
+        # word that woke it. Neither belongs in your next sentence.
+        dropped = self._drain()
+        if dropped:
+            log.debug("dropped %d buffered frames", dropped)
+
         self._listening = True
         await self._state.transition(AgentState.LISTENING)
         log.info("listening")
@@ -205,19 +278,24 @@ class VoicePipeline:
         log.info("round trip %.0f ms", (time.monotonic() - started) * 1000)
         await self.say(reply)
 
-    async def ask(self, question: str, timeout_s: float = 30.0) -> str:
+    async def ask(self, question: str, timeout_s: float = 45.0) -> str:
         """Speak a question and return what you say back.
 
-        The next utterance answers the question instead of starting a new
-        request — that's what `_awaiting_answer` in `_handle` is for.
-        """
-        await self.say(question)
+        No wake word needed — it just asked you something, so the next thing
+        you say is obviously the answer. `_awaiting_answer` is what routes it
+        here instead of to the agent as a fresh request.
 
+        It's armed *before* speaking rather than after, so that answering
+        early — cutting in over the tail of the question — still lands here.
+        """
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self._awaiting_answer = future
-        await self.begin_listening()
 
         try:
+            await self.say(question)
+            # A barge-in during the question already started listening; this
+            # is a no-op in that case.
+            await self.begin_listening()
             return await asyncio.wait_for(future, timeout=timeout_s)
         except asyncio.TimeoutError:
             log.info("no spoken answer to %r", question[:40])
@@ -225,7 +303,8 @@ class VoicePipeline:
         finally:
             self._awaiting_answer = None
             self._listening = False
-            await self._state.transition(AgentState.IDLE)
+            if self._state.state is not AgentState.IDLE:
+                await self._state.transition(AgentState.IDLE)
 
     async def ask_yes_no(self, question: str, timeout_s: float = 30.0) -> bool:
         """Anything not clearly affirmative is a no — the safe default.
@@ -241,6 +320,10 @@ class VoicePipeline:
             await self._state.transition(AgentState.IDLE)
             return
         await self._state.transition(AgentState.SPEAKING)
+        self._speaking_since = time.monotonic()
+        self._echo_samples = []
+        self._echo_floor = 0.0
+        self._loud_frames = 0
         try:
             await self.tts.speak(text)
         finally:
@@ -248,4 +331,6 @@ class VoicePipeline:
             self._muted_until = time.monotonic() + 0.4
             self.wake.reset()
             await self._bus.emit(EV_LEVEL, rms=0.0)
-            await self._state.transition(AgentState.IDLE)
+            # A barge-in already moved us to LISTENING; don't yank it back.
+            if self._state.state is AgentState.SPEAKING:
+                await self._state.transition(AgentState.IDLE)

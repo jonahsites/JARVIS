@@ -64,8 +64,11 @@ def test(
 
 @app.command()
 def onboard(
-    restart: bool = typer.Option(False, "--restart",
-                                 help="Start over instead of resuming."),
+    restart: bool = typer.Option(
+        False, "--restart",
+        help="Forget what it learned and start from scratch, not where you "
+             "left off.",
+    ),
 ) -> None:
     """Run the setup conversation again — re-teach it your apps and routine."""
     jlog.setup(False)

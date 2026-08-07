@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 import AbstractBall from './components/AbstractBall';
+import OnboardingForm from './components/OnboardingForm';
 import { useJarvis } from './hooks/useJarvis';
 import { STATES, TRANSITION, morphForLevel, type GlobConfig } from './lib/globStates';
 
@@ -90,6 +91,16 @@ export default function App() {
 
         {jarvis.transcript && <p className="transcript">{jarvis.transcript}</p>}
       </div>
+
+      {jarvis.onboardForm && (
+        <OnboardingForm
+          title={jarvis.onboardForm.title}
+          intro={jarvis.onboardForm.intro}
+          fields={jarvis.onboardForm.fields}
+          onSubmit={jarvis.submitOnboarding}
+          onSkip={() => jarvis.submitOnboarding({})}
+        />
+      )}
 
       {jarvis.capability && (
         <div className="permission" role="dialog" aria-live="assertive">

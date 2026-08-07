@@ -114,6 +114,21 @@ export const FRAGMENT_SHADER = /* glsl */ `
   // vivid instead of mostly dark. 1.0 is your original.
   uniform float gain;
 
+  vec3 rgb2hsv(vec3 c) {
+    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+  }
+
+  vec3 hsv2rgb(vec3 c) {
+    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+  }
+
   #define SCALE 2.2
   ${PERLIN}
 
@@ -124,13 +139,40 @@ export const FRAGMENT_SHADER = /* glsl */ `
     float n = 50.0 * cnoise(RGBn * vNormal) * cnoise(RGBm * (vNormal + time));
     n -= 0.10 * cnoise(dnoise * vNormal);
 
-    vec3 color = vec3(r + n, g + n, b + n);
+    vec3 raw = vec3(r + n, g + n, b + n);
+    vec3 color = clamp(raw, 0.0, 4.0);
 
-    // Keep the noise structure, borrow only its luminance, and paint the tint
-    // through it. At tintMix = 0 this line is a no-op and you get your original.
-    float lum = clamp(dot(color, vec3(0.299, 0.587, 0.114)) * 0.5 + 0.5, 0.0, 1.0);
-    vec3 tinted = tint * (0.22 + 1.25 * lum);
-    color = mix(color, tinted, tintMix);
+    // Pull the hue toward the tint instead of painting the tint over the top.
+    //
+    // A straight mix() toward a flat colour flattens everything — every pixel
+    // converges on the same green and the noise stops being visible. Rotating
+    // hue keeps each pixel's own character, so the surface stays multicoloured
+    // while the palette as a whole leans green, or blue, or amber. tintMix is
+    // how far around the wheel each pixel travels, not how much of it gets
+    // overwritten.
+    if (tintMix > 0.001) {
+      // Hue and brightness come from the *unclamped* field. The clamped one
+      // is black across much of the sphere, and black has no hue — sampling
+      // it would throw away most of the variation before we started.
+      vec3 centred = clamp(raw * 0.5 + 0.5, 0.0, 1.0);
+      vec3 hsv = rgb2hsv(centred);
+      vec3 target = rgb2hsv(tint);
+
+      // Shortest way round the wheel, so red doesn't detour through cyan.
+      float dh = target.x - hsv.x;
+      dh -= floor(dh + 0.5);
+      hsv.x = fract(hsv.x + dh * tintMix);
+
+      // Saturation up, so near-grey regions take the colour too.
+      hsv.y = mix(hsv.y, clamp(hsv.y + 0.5, 0.6, 1.0), tintMix);
+
+      // Brightness from the raw field, mapped into a range that's lit
+      // everywhere but still varies across the surface.
+      float v = clamp(dot(raw, vec3(0.3333)) * 0.55 + 0.66, 0.18, 1.15);
+      hsv.z = mix(hsv.z, v, tintMix);
+
+      color = hsv2rgb(hsv);
+    }
 
     gl_FragColor = vec4(color * gain, 1.0);
   }

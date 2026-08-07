@@ -46,8 +46,11 @@ const BASE: GlobConfig = {
   chromaRGBn: 0.0,
   chromaRGBm: 1.0,
   tint: [0.2, 0.45, 1.0],
-  tintMix: 0.9,
-  gain: 1.0,
+  // Deliberately partial. At 0.9 the tint swamps the Perlin noise and you get
+  // a flat green ball; at ~0.6 the hue clearly dominates but the multicolour
+  // still shows through it, which is the look you asked for.
+  tintMix: 0.75,
+  gain: 1.35,
   sphereWireframe: false,
   spherePoints: false,
   spherePsize: 1.0,
@@ -62,8 +65,9 @@ export const STATES: Record<JarvisState, GlobConfig> = {
     ...BASE,
     perlinTime: 12.0,
     perlinMorph: 2.4,
-    tint: [0.13, 0.38, 1.0],
-    tintMix: 0.93,
+    tint: [0.10, 0.34, 1.0],
+    tintMix: 0.78,
+    gain: 1.3,
     cameraSpeedY: 0.06,
   },
 
@@ -73,8 +77,9 @@ export const STATES: Record<JarvisState, GlobConfig> = {
     ...BASE,
     perlinTime: 26.0,
     perlinMorph: 6.0,
-    tint: [0.15, 0.95, 0.45],
-    tintMix: 0.9,
+    tint: [0.12, 0.95, 0.40],
+    tintMix: 0.76,
+    gain: 1.4,
     cameraSpeedY: 0.12,
   },
 
@@ -84,8 +89,9 @@ export const STATES: Record<JarvisState, GlobConfig> = {
     perlinTime: 55.0,
     perlinMorph: 9.0,
     perlinDNoise: 4.0,
-    tint: [1.0, 0.76, 0.1],
-    tintMix: 0.91,
+    tint: [1.0, 0.72, 0.06],
+    tintMix: 0.77,
+    gain: 1.35,
     cameraSpeedY: 0.3,
   },
 
@@ -108,7 +114,8 @@ export const STATES: Record<JarvisState, GlobConfig> = {
     perlinTime: 4.0,
     perlinMorph: 1.0,
     tint: [0.32, 0.34, 0.4],
-    tintMix: 0.97,
+    tintMix: 0.95,
+    gain: 0.9,
     cameraSpeedY: 0.02,
   },
 };
