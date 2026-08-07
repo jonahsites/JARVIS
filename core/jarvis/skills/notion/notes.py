@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ...config import VAR_DIR
 from .blocks import BREADCRUMB_BLOCKS, block_text, page_url, title_of
-from .client import NOTE_ROOTS, NotionClient
+from .client import DatabaseRegistry, NotionClient
 
 log = logging.getLogger("jarvis.notes")
 
@@ -209,9 +209,11 @@ def _to_fts_query(query: str) -> str:
 class NoteCrawler:
     """Walks the note tree and fills the index."""
 
-    def __init__(self, client: NotionClient, index: NoteIndex):
+    def __init__(self, client: NotionClient, index: NoteIndex,
+                 registry: DatabaseRegistry):
         self._client = client
         self._index = index
+        self._db = registry
 
     async def crawl(self, *, force: bool = False) -> int:
         """Index every note. Returns how many were written."""
@@ -222,7 +224,13 @@ class NoteCrawler:
         started = time.monotonic()
         written = 0
 
-        for course, database_id in NOTE_ROOTS.items():
+        roots = self._db.note_roots
+        if not roots:
+            log.warning("no per-course Unit databases visible — share the Notes "
+                        "page with the integration")
+            return 0
+
+        for course, database_id in roots.items():
             try:
                 written += await self._crawl_course(course, database_id, force)
             except Exception:

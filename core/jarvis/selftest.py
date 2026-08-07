@@ -376,7 +376,7 @@ async def test_mac() -> bool:
 async def test_notion() -> bool:
     _stage("notion")
     from .skills.notion.assignments import Assignments
-    from .skills.notion.client import NotionClient
+    from .skills.notion.client import DatabaseRegistry, NotionClient
     from .skills.notion.notes import NoteCrawler, NoteIndex
 
     if not secrets.notion_token:
@@ -392,7 +392,35 @@ async def test_notion() -> bool:
         await client.close()
         return False
 
-    assignments = Assignments(client)
+    # What can this integration actually see? Most Notion problems are this
+    # and nothing else, so name it before anything can 404.
+    registry = DatabaseRegistry()
+    try:
+        await registry.discover(client)
+    except Exception as exc:
+        _bad(f"database discovery failed: {exc}")
+        await client.close()
+        return False
+
+    if not registry.visible:
+        _bad("the integration can see zero databases",
+             "In Notion open your Dashboard page > ... > Connections > add the "
+             "integration. Children inherit, so one share covers everything.")
+        await client.close()
+        return False
+
+    _ok(f"{len(registry.visible)} databases visible: "
+        + ", ".join(registry.visible[:6])
+        + ("..." if len(registry.visible) > 6 else ""))
+
+    from .skills.notion.client import NOTE_ROOT_TITLES, WANTED
+    missing = [k for k in WANTED if not registry.has(k)]
+    if missing:
+        _warn(f"not found: {', '.join(missing)} - those features stay off")
+    _ok(f"resolved {len(registry.resolved)}/{len(WANTED)} core databases, "
+        f"{len(registry.note_roots)}/{len(NOTE_ROOT_TITLES)} note roots")
+
+    assignments = Assignments(client, registry)
     try:
         courses = await assignments.load_courses()
         if not courses:
@@ -428,7 +456,7 @@ async def test_notion() -> bool:
 
     console.print("  crawling notes (this can take a minute)…")
     index = NoteIndex()
-    crawler = NoteCrawler(client, index)
+    crawler = NoteCrawler(client, index, registry)
     try:
         started = time.monotonic()
         written = await crawler.crawl()

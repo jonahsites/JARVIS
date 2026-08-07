@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from .blocks import page_url, plain_property, title_of
-from .client import DB, NotionClient
+from .client import DatabaseRegistry, NotionClient
 
 log = logging.getLogger("jarvis.assignments")
 
@@ -159,8 +159,9 @@ def _parse_date(value: Any) -> date | None:
 
 
 class Assignments:
-    def __init__(self, client: NotionClient):
+    def __init__(self, client: NotionClient, registry: DatabaseRegistry):
         self._client = client
+        self._db = registry
         self._courses: dict[str, Course] = {}
 
     @property
@@ -171,7 +172,7 @@ class Assignments:
 
     async def load_courses(self) -> list[Course]:
         courses: dict[str, Course] = {}
-        async for row in self._client.query(DB.COURSES):
+        async for row in self._client.query(self._db.id_for("courses")):
             course = Course(
                 id=row["id"],
                 name=title_of(row),
@@ -257,7 +258,7 @@ class Assignments:
             ]
         }
         return [self._to_assignment(row)
-                async for row in self._client.query(DB.ASSIGNMENTS, filter=filter_)]
+                async for row in self._client.query(self._db.id_for("assignments"), filter=filter_)]
 
     async def upcoming(self, *, today: date, within_days: int = 14,
                        limit: int = 12) -> list[Assignment]:
@@ -312,7 +313,7 @@ class Assignments:
 
         properties["Status"] = {"status": {"name": "Not started"}}
 
-        page = await self._client.create_page(DB.ASSIGNMENTS, properties)
+        page = await self._client.create_page(self._db.id_for("assignments"), properties)
         return {
             "ok": True,
             "id": page["id"],
@@ -339,8 +340,11 @@ class Assignments:
 
     async def days_off(self) -> set[date]:
         days: set[date] = set()
+        if not self._db.has("days_off"):
+            log.info("no Days Off database visible — A/B rotation won't skip holidays")
+            return days
         try:
-            async for row in self._client.query(DB.DAYS_OFF):
+            async for row in self._client.query(self._db.id_for("days_off")):
                 for prop in (row.get("properties") or {}).values():
                     if prop.get("type") != "date":
                         continue

@@ -22,37 +22,116 @@ API = "https://api.notion.com/v1"
 VERSION = "2022-06-28"
 
 
-class DB:
-    """Database ids from your workspace."""
+# Databases are found by title rather than by hardcoded id.
+#
+# Two reasons. First, Notion has two different identifiers for what looks like
+# one database — a *database* id (what the REST API wants) and a *data source*
+# id (what the MCP surfaces). They are not interchangeable, and using the wrong
+# one gives a 404 that reads exactly like a permissions error. Second, an id
+# baked into source breaks silently the day a database is recreated.
+#
+# So: ask Notion what it can see, match on title. Self-healing, and when a
+# database is genuinely missing the error can say which one.
 
-    ASSIGNMENTS = "24a4b8e1-c691-818e-b01d-000b969755f8"
-    COURSES = "24a4b8e1-c691-819e-9f34-000ba0782495"
-    CLASS_NOTES = "24a4b8e1-c691-818e-bfb1-000b8a151f7f"
-    UNITS = "6b6235fc-aa46-4354-b36e-b7db46199d72"
-    TASKS = "24a4b8e1-c691-816f-b4fb-000b1f02de60"
-    PLANNER = "24a4b8e1-c691-8139-9463-000b44e3ca50"
-    GOALS = "24a4b8e1-c691-8116-82ef-000b884d7223"
-    BOOKMARKS = "24a4b8e1-c691-817c-9b84-000bea29423b"
-    DRIVE = "24a4b8e1-c691-81b2-9a1e-000b44645bce"
-    BRAIN_DUMP = "3a99caf1-1b45-46a5-a593-a1dde40d3ea1"
-    DAYS_OFF = "5eb5b06a-5171-4ac5-810a-96b375073d4d"
+# key -> the titles that count as a match, best first.
+WANTED: dict[str, list[str]] = {
+    "assignments": ["Assignments"],
+    "courses": ["Courses"],
+    "class_notes": ["Class Notes"],
+    "units": ["Units"],
+    "tasks": ["Tasks"],
+    "planner": ["Planner"],
+    "goals": ["Goals"],
+    "bookmarks": ["Bookmarks"],
+    "drive": ["Drive"],
+    "brain_dump": ["Brain Dump"],
+    "days_off": ["Days Off", "Days off"],
+}
 
-
-# The six per-course Unit databases behind your Notes page. These are the
-# entry points for note search — each row is a unit, and the notes themselves
-# are child pages nested inside it.
-NOTE_ROOTS: dict[str, str] = {
-    "AP Calculus AB": "3a14b8e1-c691-8018-90a0-000baf11ed64",
-    "AP Environmental Science": "3a14b8e1-c691-80e0-ab09-000b9c30bea6",
-    "AP Psychology": "0de4b8e1-c691-838a-9d25-07c8437eec96",
-    "English Seminar: Garden State": "3a14b8e1-c691-8099-9fa6-000be3092417",
-    "Spanish Cinema": "3a14b8e1-c691-80e5-af0d-000be7d89b95",
-    "AP Economics": "3a14b8e1-c691-8082-9547-000bb6ef4602",
+# The six per-course Unit databases behind the Notes page. Each row is a unit,
+# and the notes themselves are child pages nested inside it.
+NOTE_ROOT_TITLES: dict[str, list[str]] = {
+    "AP Calculus AB": ["AP Calculus AB Units"],
+    "AP Environmental Science": ["AP Environmental Science Units",
+                                 "AP Environmental Science"],
+    "AP Psychology": ["AP Psychology Units"],
+    "English Seminar: Garden State": ["English Seminar: Garden State Units"],
+    "Spanish Cinema": ["Spanish Cinema Units"],
+    "AP Economics": ["AP Economics Units"],
 }
 
 
 class NotionError(RuntimeError):
     pass
+
+
+class DatabaseRegistry:
+    """Maps friendly names to whatever database ids Notion actually reports."""
+
+    def __init__(self) -> None:
+        self._ids: dict[str, str] = {}
+        self._note_roots: dict[str, str] = {}
+        self._seen: list[str] = []
+
+    async def discover(self, client: "NotionClient") -> None:
+        databases = await client.all_databases()
+        self._seen = sorted(d["title"] for d in databases if d["title"])
+
+        by_title = {d["title"].strip().lower(): d["id"] for d in databases}
+
+        def find(candidates: list[str]) -> str | None:
+            for candidate in candidates:
+                if (found := by_title.get(candidate.strip().lower())):
+                    return found
+            # Fall back to a unique substring match — catches trailing spaces
+            # and small renames like "Courses " or "My Courses".
+            for candidate in candidates:
+                needle = candidate.strip().lower()
+                hits = [i for t, i in by_title.items() if needle in t]
+                if len(hits) == 1:
+                    return hits[0]
+            return None
+
+        for key, titles in WANTED.items():
+            if (found := find(titles)):
+                self._ids[key] = found
+
+        for course, titles in NOTE_ROOT_TITLES.items():
+            if (found := find(titles)):
+                self._note_roots[course] = found
+
+        log.info("notion: %d databases visible, resolved %d/%d core + %d/%d note roots",
+                 len(databases), len(self._ids), len(WANTED),
+                 len(self._note_roots), len(NOTE_ROOT_TITLES))
+
+        missing = [k for k in WANTED if k not in self._ids]
+        if missing:
+            log.warning("notion: could not find %s", ", ".join(missing))
+
+    def id_for(self, key: str) -> str:
+        found = self._ids.get(key)
+        if not found:
+            raise NotionError(
+                f"the {key.replace('_', ' ')} database isn't shared with this "
+                f"integration. Visible databases: "
+                f"{', '.join(self._seen) if self._seen else 'none'}"
+            )
+        return found
+
+    def has(self, key: str) -> bool:
+        return key in self._ids
+
+    @property
+    def note_roots(self) -> dict[str, str]:
+        return dict(self._note_roots)
+
+    @property
+    def visible(self) -> list[str]:
+        return list(self._seen)
+
+    @property
+    def resolved(self) -> dict[str, str]:
+        return dict(self._ids)
 
 
 class NotionClient:
@@ -159,6 +238,32 @@ class NotionClient:
 
     async def whoami(self) -> dict[str, Any]:
         return await self._request("GET", "/users/me")
+
+    async def all_databases(self) -> list[dict[str, Any]]:
+        """Every database this integration can actually see.
+
+        Also the single most useful diagnostic there is: if this comes back
+        empty the token is fine and the integration simply hasn't been
+        connected to any pages.
+        """
+        found: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            body: dict[str, Any] = {
+                "filter": {"value": "database", "property": "object"},
+                "page_size": 100,
+            }
+            if cursor:
+                body["start_cursor"] = cursor
+
+            data = await self._request("POST", "/search", json=body)
+            for row in data.get("results", []):
+                title = "".join(t.get("plain_text", "") for t in row.get("title") or [])
+                found.append({"id": row["id"], "title": title.strip()})
+
+            if not data.get("has_more"):
+                return found
+            cursor = data.get("next_cursor")
 
     # ---- writes ----------------------------------------------------------
 

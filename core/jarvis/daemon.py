@@ -22,7 +22,7 @@ from .proactive.engine import ProactiveEngine
 from .skills.message_tools import register_messages
 from .skills.messages import Messages
 from .skills.notion.assignments import Assignments
-from .skills.notion.client import NotionClient
+from .skills.notion.client import DatabaseRegistry, NotionClient
 from .skills.notion.notes import NoteCrawler, NoteIndex
 from .skills.notion.tools import register_notion
 from .skills.observer import Observer
@@ -47,9 +47,10 @@ class Daemon:
         self.schedule = ScheduleResolver(config.schedule)
 
         self.notion = NotionClient(secrets.notion_token)
-        self.assignments = Assignments(self.notion)
+        self.databases = DatabaseRegistry()
+        self.assignments = Assignments(self.notion, self.databases)
         self.notes = NoteIndex()
-        self.crawler = NoteCrawler(self.notion, self.notes)
+        self.crawler = NoteCrawler(self.notion, self.notes, self.databases)
 
         self.messages = Messages(config.messages.blocklist)
         self.outbox = Outbox(self.bus, config.messages.cancel_window_s)
@@ -125,6 +126,10 @@ class Daemon:
         if not self.notion.enabled:
             return
         try:
+            # Ids are resolved by title, so a renamed or recreated database
+            # heals itself on the next refresh instead of 404ing forever.
+            if not self.databases.resolved:
+                await self.databases.discover(self.notion)
             await self.assignments.load_courses()
             self.schedule.set_days_off(await self.assignments.days_off())
 
