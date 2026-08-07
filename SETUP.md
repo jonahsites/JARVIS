@@ -24,6 +24,12 @@ ollama serve            # leave running, or `brew services start ollama`
 ollama pull qwen3:8b    # ~5 GB
 ```
 
+**On a MacBook Air, or any Mac with 16 GB or less, pull `qwen3:4b` instead**
+and set `OLLAMA_MODEL=qwen3:4b` in `.env`. An 8B model fits, but it spends its
+time swapping and answers take 15+ seconds — which defeats the point of
+shouting at it from across the room. Anything genuinely hard gets escalated to
+OpenRouter anyway, so the local model needs to be fast more than clever.
+
 ## 3. Python
 
 ```bash

@@ -57,7 +57,9 @@ class Daemon:
 
         self.router = Router(
             OllamaClient(secrets.ollama_host, secrets.ollama_model,
-                         config.llm.local_timeout_s),
+                         config.llm.local_timeout_s,
+                         keep_alive=config.llm.ollama_keep_alive,
+                         num_ctx=config.llm.ollama_num_ctx),
             OpenRouterClient(secrets.openrouter_api_key, secrets.openrouter_model,
                              config.llm.cloud_timeout_s),
             config.llm,

@@ -49,24 +49,49 @@ def register_all(registry: Registry, memory: Memory, schedule: ScheduleResolver,
     # works with no Notion token.
     @registry.register(
         "get_day_type",
-        "Whether today (or a given day) is an A day or a B day.",
+        "Whether it's an A day or a B day. Leave `day` out to ask about today "
+        "— that is almost always what he means. Only pass a date if he named a "
+        "specific other day, and never invent one.",
         {
             "type": "object",
-            "properties": {"day": {"type": "string", "description": "YYYY-MM-DD"}},
+            "properties": {
+                "day": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD. Omit for today. Do not guess.",
+                }
+            },
         },
     )
     async def get_day_type(day: str | None = None) -> dict[str, Any]:
         from datetime import date as _date
 
-        target = _date.fromisoformat(day) if day else schedule.now().date()
+        today = schedule.now().date()
+        target = today
+        if day:
+            try:
+                target = _date.fromisoformat(day)
+            except ValueError:
+                log.warning("bad date %r from model — using today", day)
+
+            # 8B models will happily pass a date from their training data.
+            # Anything wildly off is a hallucination, not an intent.
+            if abs((target - today).days) > 365:
+                log.warning("model passed %s, %d days from today — using today",
+                            target, (target - today).days)
+                target = today
+
         day_type = schedule.day_type(target)
-        return {
+        result: dict[str, Any] = {
             "date": target.isoformat(),
+            "is_today": target == today,
             "day_type": day_type,
             "school": day_type is not None,
-            "next_school_day": (None if day_type
-                                else schedule.next_school_day(target).isoformat()),
         }
+        # Only included when it's actually relevant, so it can't get read out
+        # as "there's no next school day listed".
+        if day_type is None:
+            result["next_school_day"] = schedule.next_school_day(target).isoformat()
+        return result
 
     # ---- apps ------------------------------------------------------------
 

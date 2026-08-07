@@ -217,7 +217,10 @@ async def test_llm() -> bool:
     from .skills.tools import register_all
 
     router = Router(
-        OllamaClient(secrets.ollama_host, secrets.ollama_model, config.llm.local_timeout_s),
+        OllamaClient(secrets.ollama_host, secrets.ollama_model,
+                     config.llm.local_timeout_s,
+                     keep_alive=config.llm.ollama_keep_alive,
+                     num_ctx=config.llm.ollama_num_ctx),
         OpenRouterClient(secrets.openrouter_api_key, secrets.openrouter_model,
                          config.llm.cloud_timeout_s),
         config.llm,
@@ -243,7 +246,20 @@ async def test_llm() -> bool:
     schedule = ScheduleResolver(config.schedule)
     register_all(registry, memory, schedule, ledger)
 
-    agent = Agent(config, router, registry, memory, lambda: "")
+    # The same context the daemon builds. Without it the model has no idea what
+    # today is and will invent a date to pass to tools — which is exactly the
+    # bug this stage is meant to catch.
+    from .llm.prompts import context_block
+
+    def build_context() -> str:
+        now = schedule.now()
+        return context_block(
+            now=now.strftime("%A, %B %-d %Y, %-I:%M %p"),
+            day_type=schedule.day_type(), classes=[], due_soon=[],
+            facts={}, recent=[],
+        )
+
+    agent = Agent(config, router, registry, memory, build_context)
 
     # Questions answerable only by calling a tool — tool-calling is the part
     # 8B models most often get wrong, and the part providers disagree about.
@@ -273,6 +289,16 @@ async def test_llm() -> bool:
 
         _ok(f'"{question}" -> "{reply.text}"  '
             f'[{elapsed:.1f}s, {reply.route}, tools: {", ".join(reply.tools)}]')
+
+        # A correct answer that takes fifteen seconds is still a failure for
+        # something you shout at from across the room.
+        if elapsed > 8:
+            _warn(f"{elapsed:.0f}s is too slow to feel like a conversation — "
+                  f"try a smaller local model: ollama pull qwen3:4b, then set "
+                  f"OLLAMA_MODEL=qwen3:4b in .env")
+        elif elapsed > 4:
+            _warn(f"{elapsed:.0f}s is usable but sluggish; qwen3:4b would be "
+                  f"roughly twice as fast")
 
         if "<think" in reply.text.lower():
             _bad("reasoning leaked into the spoken reply",

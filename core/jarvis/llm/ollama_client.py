@@ -1,10 +1,20 @@
 """Local model via Ollama (qwen3:8b by default).
 
-Qwen3 is a hybrid reasoning model — left alone it emits a <think> block before
-answering, which costs you a second or two of latency on requests that don't
-need it. For the fast path we send `/no_think`; the escalation path to
-OpenRouter exists precisely so the local model never has to do the hard
-reasoning anyway.
+Three things here exist purely for latency, because a secretary that takes
+fifteen seconds to tell you the time is not a secretary:
+
+`think=False` turns off Qwen3's reasoning block at the template level. That's
+the real switch — the `/no_think` string is only a fallback for builds that
+don't support the parameter. A thinking pass can easily double the time to
+first word, and the escalation path to OpenRouter exists precisely so the local
+model never needs to do hard reasoning anyway.
+
+`keep_alive` stops Ollama evicting the model between turns. Reloading 5 GB
+costs several seconds and it happens silently.
+
+`num_ctx` is raised because the default is small enough that thirteen tool
+schemas plus the system prompt can overflow it, which makes Ollama silently
+re-process context on every call.
 """
 
 from __future__ import annotations
@@ -23,12 +33,18 @@ class OllamaClient:
     name = "local"
 
     def __init__(self, host: str, model: str, timeout_s: float = 20.0,
-                 thinking: bool = False):
+                 thinking: bool = False, keep_alive: str = "30m",
+                 num_ctx: int = 8192):
         self.host = host
         self.model = model
         self.timeout_s = timeout_s
         self.thinking = thinking
+        self.keep_alive = keep_alive
+        self.num_ctx = num_ctx
         self._client = None
+        # Older ollama-python has no `think` parameter; detected once on the
+        # first call rather than guessed from a version string.
+        self._supports_think = True
 
     def _get(self):
         if self._client is None:
@@ -87,15 +103,34 @@ class OllamaClient:
         payload = self._render(messages)
 
         if not self.thinking and payload and payload[0].get("role") == "system":
-            # Qwen3's soft switch, on the system message so it can't land on a
+            # Fallback switch, on the system message so it can never land on a
             # tool result. Harmless on models that don't recognise it.
             payload[0] = dict(payload[0])
             payload[0]["content"] = f"{payload[0].get('content', '')}\n\n/no_think"
 
-        response = await self._get().chat(
-            model=self.model, messages=payload, tools=tools or None,
-            options={"temperature": 0.4, "num_predict": 512},
-        )
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": payload,
+            "tools": tools or None,
+            "keep_alive": self.keep_alive,
+            "options": {
+                "temperature": 0.4,
+                "num_predict": 512,
+                "num_ctx": self.num_ctx,
+            },
+        }
+        if self._supports_think and not self.thinking:
+            kwargs["think"] = False
+
+        try:
+            response = await self._get().chat(**kwargs)
+        except TypeError as exc:
+            if "think" not in str(exc) or not self._supports_think:
+                raise
+            log.info("ollama build has no `think` parameter — using /no_think only")
+            self._supports_think = False
+            kwargs.pop("think", None)
+            response = await self._get().chat(**kwargs)
 
         message = response.get("message", {}) or {}
         calls: list[ToolCall] = []

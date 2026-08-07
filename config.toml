@@ -42,6 +42,13 @@ escalate_keywords = [
 local_timeout_s = 20.0
 cloud_timeout_s = 60.0
 
+# Keeps the model in memory between turns. Ollama silently evicts it otherwise,
+# and reloading several GB costs seconds you'll feel on the next thing you say.
+ollama_keep_alive = "30m"
+# Default is small enough that 25 tool schemas plus the system prompt overflow
+# it, which makes Ollama re-process context on every call.
+ollama_num_ctx = 8192
+
 [persona]
 name = "Jarvis"
 user_name = "Jonah"

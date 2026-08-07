@@ -87,6 +87,13 @@ class LLMConfig(BaseModel):
     local_timeout_s: float = 20.0
     cloud_timeout_s: float = 60.0
 
+    # Keeps the model resident between turns. Reloading several GB costs
+    # seconds and Ollama does it silently once the model goes idle.
+    ollama_keep_alive: str = "30m"
+    # The default is small enough that the tool schemas plus the system prompt
+    # can overflow it, which forces context re-processing on every call.
+    ollama_num_ctx: int = 8192
+
 
 class PersonaConfig(BaseModel):
     name: str = "Jarvis"

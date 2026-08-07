@@ -86,6 +86,21 @@ Asks two questions that can only be answered by calling a tool — this is where
 8B models most often fall down. It also checks no reasoning leaked into the
 spoken reply.
 
+It also reports how long each answer took, and warns if it's too slow.
+
+**If it says 8+ seconds**, `qwen3:8b` is too big for your machine — on a
+MacBook Air especially, an 8B model spends most of its time swapping. Switch to
+the 4B:
+
+```bash
+ollama pull qwen3:4b
+echo 'OLLAMA_MODEL=qwen3:4b' >> ../.env
+python -m jarvis test llm
+```
+
+Roughly twice as fast, and the router escalates anything genuinely hard to
+OpenRouter regardless — so the local model mostly needs to be quick, not clever.
+
 You can talk to it without a microphone at all:
 
 ```bash
