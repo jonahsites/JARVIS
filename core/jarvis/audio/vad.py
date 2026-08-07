@@ -20,10 +20,13 @@ SAMPLE_RATE = 16_000
 
 class UtteranceDetector:
     def __init__(self, silence_ms: int = 700, max_utterance_s: float = 30.0,
-                 speech_threshold: float = 0.5):
+                 speech_threshold: float = 0.5, lead_silence_s: float = 2.5):
         self.silence_ms = silence_ms
         self.max_samples = int(max_utterance_s * SAMPLE_RATE)
         self.speech_threshold = speech_threshold
+        # How long to wait for you to start talking before giving up. Short
+        # after the wake word, longer when it's holding a conversation open.
+        self.lead_silence_s = lead_silence_s
 
         self._model = None
         self._pending = np.zeros(0, dtype=np.float32)
@@ -88,8 +91,9 @@ class UtteranceDetector:
                 log.info("utterance hit max length")
                 return self._finish()
 
-            # Woken but said nothing. Two seconds of dead air ends the window.
-            if not self._heard_speech and self._silence_samples >= SAMPLE_RATE * 2:
+            # Listening but you haven't started. Dead air ends the window.
+            if (not self._heard_speech
+                    and self._silence_samples >= SAMPLE_RATE * self.lead_silence_s):
                 self.reset()
                 return np.zeros(0, dtype=np.float32)
 

@@ -32,6 +32,21 @@ All audio lives in the Python daemon. The browser tab is display only, so the
 loop keeps working whether or not it's open — which is the point of something
 you shout at.
 
+### Talking to it
+
+The wake word starts a conversation. It isn't needed for anything else:
+
+- **Follow-ups don't need it.** After it answers it keeps listening for about
+  seven seconds, so you can just carry on. Say nothing and it slips back to
+  waiting for "hey Jarvis".
+- **Answers don't need it.** When it asks you something, the next thing you
+  say is the answer.
+- **You can talk over it.** Interrupting stops it mid-sentence, the same way
+  interrupting a person does. Since the mic hears the speakers, this
+  calibrates against the echo rather than using a fixed threshold — the first
+  450 ms of playback measures the room, and only sound clearly above that
+  counts as you.
+
 ### The reasoning/speech wall
 
 You never hear it think. Reasoning has exactly one destination — the log file —

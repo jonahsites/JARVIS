@@ -31,6 +31,21 @@ tts_speed = 1.05
 silence_ms = 700
 max_utterance_s = 30.0
 
+# Talk over it and it stops. The wake word is only for starting a conversation.
+# Since the mic hears the speakers, the first barge_calibrate_ms of playback
+# measures that echo and only sound clearly above it counts as you.
+# Cutting itself off? Raise the multiplier. Ignoring you? Lower it.
+barge_in = true
+barge_in_multiplier = 2.8
+barge_in_ms = 320
+barge_calibrate_ms = 450
+
+# After it answers it keeps listening this long, so a follow-up doesn't need
+# "hey Jarvis" again. Say nothing and it quietly goes back to the wake word.
+followup_window_s = 7.0
+# How long it waits for you to start talking after the wake word itself.
+lead_silence_s = 2.5
+
 [llm]
 # Local first, escalate on complexity.
 escalate_on_tool_depth = 2

@@ -56,7 +56,9 @@ class VoicePipeline:
         self._responder: Responder | None = None
 
         self.wake = WakeWord(config.voice.wake_model, config.voice.wake_threshold)
-        self.vad = UtteranceDetector(config.voice.silence_ms, config.voice.max_utterance_s)
+        self.vad = UtteranceDetector(config.voice.silence_ms,
+                                     config.voice.max_utterance_s,
+                                     lead_silence_s=config.voice.lead_silence_s)
         self.stt = STT(config.voice.stt_engine, config.voice.qwen_model,
                        config.voice.stt_model, config.voice.whisper_model)
         self.tts = TTS(config.voice.tts_voice, config.voice.tts_speed,
@@ -231,8 +233,13 @@ class VoicePipeline:
                 if self.wake.feed(pcm16):
                     await self.begin_listening()
 
-    async def begin_listening(self) -> None:
-        """Wake word, hotkey, barge-in, or answering a question it asked."""
+    async def begin_listening(self, *, follow_up: bool = False) -> None:
+        """Wake word, hotkey, barge-in, or carrying on a conversation.
+
+        `follow_up` widens the window for you to start talking, because after
+        an answer you're often thinking about the next thing rather than
+        replying instantly.
+        """
         if self._listening:
             return
         if self.tts.is_speaking:
@@ -240,6 +247,10 @@ class VoicePipeline:
         if self.on_listen_start is not None:
             self.on_listen_start()
 
+        self.vad.lead_silence_s = (
+            self._config.voice.followup_window_s if follow_up
+            else self._config.voice.lead_silence_s
+        )
         self.vad.reset()
         self.wake.reset()
         # Everything captured up to now is either JARVIS's own voice or the
@@ -250,7 +261,7 @@ class VoicePipeline:
 
         self._listening = True
         await self._state.transition(AgentState.LISTENING)
-        log.info("listening")
+        log.info("listening%s", " (follow-up)" if follow_up else "")
 
     async def _handle(self, utterance: np.ndarray) -> None:
         await self._state.transition(AgentState.THINKING)
@@ -280,7 +291,9 @@ class VoicePipeline:
             reply = "Something went wrong on my end — check the log."
 
         log.info("round trip %.0f ms", (time.monotonic() - started) * 1000)
-        await self.say(reply)
+        # Stay open afterwards — you shouldn't have to say "hey Jarvis" again
+        # just to ask a follow-up.
+        await self.say(reply, follow_up=True)
 
     async def ask(self, question: str, timeout_s: float = 45.0) -> str:
         """Speak a question and return what you say back.
@@ -318,8 +331,13 @@ class VoicePipeline:
         """
         return _is_yes(await self.ask(question, timeout_s))
 
-    async def say(self, text: str) -> None:
-        """Speak, then return to idle. The only path from text to your speakers."""
+    async def say(self, text: str, *, follow_up: bool = False) -> None:
+        """Speak. The only path from text to your speakers.
+
+        With `follow_up`, it keeps listening afterwards instead of dropping
+        back to the wake word — that's what makes it a conversation rather
+        than a series of unrelated commands.
+        """
         if not text.strip():
             await self._state.transition(AgentState.IDLE)
             return
@@ -335,6 +353,15 @@ class VoicePipeline:
             self._muted_until = time.monotonic() + 0.4
             self.wake.reset()
             await self._bus.emit(EV_LEVEL, rms=0.0)
+
             # A barge-in already moved us to LISTENING; don't yank it back.
             if self._state.state is AgentState.SPEAKING:
-                await self._state.transition(AgentState.IDLE)
+                if follow_up:
+                    # Let the room settle first. The speakers are still
+                    # decaying and the driver has audio in flight; without this
+                    # the tail of its own sentence becomes the start of yours.
+                    await asyncio.sleep(0.25)
+                    self._drain()
+                    await self.begin_listening(follow_up=True)
+                else:
+                    await self._state.transition(AgentState.IDLE)

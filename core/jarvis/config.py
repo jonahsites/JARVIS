@@ -87,6 +87,14 @@ class VoiceConfig(BaseModel):
     barge_in_ms: int = 320
     barge_calibrate_ms: int = 450
 
+    # After it answers, it keeps listening this long so you can just carry on
+    # talking. Saying "hey Jarvis" again to ask a follow-up isn't how a
+    # conversation works. Only if you say nothing in this window does it go
+    # back to waiting for the wake word.
+    followup_window_s: float = 7.0
+    # How long it waits for you to start talking after the wake word.
+    lead_silence_s: float = 2.5
+
 
 class LLMConfig(BaseModel):
     # "Local first, escalate on complexity" — your choice.

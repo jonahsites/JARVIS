@@ -77,7 +77,7 @@ class Daemon:
         self.proactive = ProactiveEngine(
             config=config.proactive, state=self.state, memory=self.memory,
             schedule=self.schedule, observer=self.observer,
-            speak=self.pipeline.say,
+            speak=self._speak_and_listen,
             assignments_provider=lambda: self._open_assignments,
             is_busy=lambda: self._in_conversation,
         )
@@ -190,7 +190,7 @@ class Daemon:
             return
         await self.state.transition(AgentState.THINKING)
         reply = await self.agent.respond(text)
-        await self.pipeline.say(reply)
+        await self.pipeline.say(reply, follow_up=True)
 
     async def _on_form_submit(self, event: Event) -> None:
         if self._pending_form and not self._pending_form.done():
@@ -304,6 +304,14 @@ class Daemon:
             # Not awaited — onboarding is a long conversation, and start()
             # returning is what lets the wake word work during it.
             self._tasks.append(asyncio.create_task(self._first_run()))
+
+    async def _speak_and_listen(self, text: str) -> None:
+        """Proactive speech, left open for a reply.
+
+        It just told you something unprompted; "mark it done" or "remind me
+        later" should work without you saying its name first.
+        """
+        await self.pipeline.say(text, follow_up=True)
 
     async def _ask_aloud(self, prompt: str) -> bool:
         """A permission prompt is a two-turn exchange — hold off proactive
