@@ -42,6 +42,16 @@ def _import_check(module: str, package: str, why: str) -> Check:
                      f"pip install {package}")
 
 
+def _message_count() -> int:
+    from .skills.messages import Messages
+
+    conn = Messages()._connect()
+    try:
+        return conn.execute("SELECT COUNT(*) FROM message").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def _port_free(port: int) -> bool:
     with socket.socket() as sock:
         return sock.connect_ex(("127.0.0.1", port)) != 0
@@ -218,14 +228,17 @@ async def run_checks() -> int:
             checks.append(Check("messages", WARN, "chat.db not found",
                                 "Only matters if you want JARVIS reading iMessages"))
         else:
+            # Do the same read the real code does, rather than just opening a
+            # handle — sqlite3.connect() is lazy and succeeds even without
+            # permission, so a cheaper check disagrees with reality.
             try:
-                await asyncio.to_thread(Messages()._connect().close)
-                checks.append(Check("messages", OK, "chat.db readable"))
-            except Exception:
+                count = await asyncio.to_thread(_message_count)
+                checks.append(Check("messages", OK, f"chat.db readable ({count} messages)"))
+            except Exception as exc:
                 checks.append(Check(
-                    "messages", WARN, "chat.db exists but can't be opened",
+                    "messages", WARN, f"chat.db unreadable: {str(exc)[:60]}",
                     "System Settings > Privacy & Security > Full Disk Access "
-                    "> add your terminal, then fully quit and reopen it",
+                    "> add your terminal, then fully quit it (Cmd-Q) and reopen",
                 ))
 
     # ---- ports -----------------------------------------------------------

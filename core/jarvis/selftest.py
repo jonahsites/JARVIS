@@ -245,28 +245,43 @@ async def test_llm() -> bool:
 
     agent = Agent(config, router, registry, memory, lambda: "")
 
-    # A question it can only answer by calling a tool — proves tool-calling
-    # works, which is the part 8B models most often get wrong.
-    for question in ["What time is it?", "Is today an A day or a B day?"]:
+    # Questions answerable only by calling a tool — tool-calling is the part
+    # 8B models most often get wrong, and the part providers disagree about.
+    passed = True
+    for question, expect_tool in [("What time is it?", "get_time"),
+                                  ("Is today an A day or a B day?", "get_day_type")]:
         try:
             started = time.monotonic()
-            reply = await agent.respond(question)
+            reply = await agent.respond_detailed(question)
             elapsed = time.monotonic() - started
         except Exception as exc:
-            _bad(f'"{question}" failed: {exc}')
+            _bad(f'"{question}" raised: {exc}')
             return False
 
-        if not reply:
-            _bad(f'"{question}" produced an empty reply')
-            return False
-        _ok(f'"{question}" -> "{reply}"  [{elapsed:.1f}s]')
+        # A spoken apology is a string like any other — check `ok`, not length.
+        if not reply.ok:
+            _bad(f'"{question}" -> "{reply.text}"',
+                 reply.error or "The model returned nothing usable.")
+            passed = False
+            continue
 
-    if "<think" in reply.lower():
-        _bad("reasoning leaked into the spoken reply",
-             "strip_thinking() didn't catch it — please send me this output.")
-        return False
-    _ok("no reasoning leaked into speech")
-    return True
+        if expect_tool not in reply.tools:
+            _warn(f'"{question}" -> "{reply.text}"  '
+                  f'[answered without calling {expect_tool}]')
+            passed = False
+            continue
+
+        _ok(f'"{question}" -> "{reply.text}"  '
+            f'[{elapsed:.1f}s, {reply.route}, tools: {", ".join(reply.tools)}]')
+
+        if "<think" in reply.text.lower():
+            _bad("reasoning leaked into the spoken reply",
+                 "strip_thinking() missed it — please send me this output.")
+            return False
+
+    if passed:
+        _ok("tool calling works, and no reasoning leaked into speech")
+    return passed
 
 
 async def test_mac() -> bool:

@@ -49,14 +49,48 @@ class OllamaClient:
             log.warning("ollama unreachable at %s: %s", self.host, exc)
             return False
 
+    @staticmethod
+    def _render(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Canonical -> Ollama.
+
+        Ollama validates with pydantic: `arguments` must be a dict (not the
+        JSON string OpenAI uses), there is no `tool_call_id` field, and tool
+        results are matched back by `tool_name`.
+        """
+        out: list[dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role")
+
+            if role == "assistant" and message.get("tool_calls"):
+                out.append({
+                    "role": "assistant",
+                    "content": message.get("content", "") or "",
+                    "tool_calls": [
+                        {"function": {"name": call["name"],
+                                      "arguments": call["arguments"]}}
+                        for call in message["tool_calls"]
+                    ],
+                })
+            elif role == "tool":
+                out.append({
+                    "role": "tool",
+                    "content": message.get("content", ""),
+                    "tool_name": message.get("name", ""),
+                })
+            else:
+                out.append({k: v for k, v in message.items()
+                            if k in ("role", "content")})
+        return out
+
     async def chat(self, messages: list[dict[str, Any]],
                    tools: list[dict[str, Any]] | None = None) -> ChatResult:
-        payload = list(messages)
-        if not self.thinking and payload:
-            # Qwen3's soft switch. Harmless on models that don't recognise it.
-            last = dict(payload[-1])
-            last["content"] = f"{last.get('content', '')}\n/no_think"
-            payload[-1] = last
+        payload = self._render(messages)
+
+        if not self.thinking and payload and payload[0].get("role") == "system":
+            # Qwen3's soft switch, on the system message so it can't land on a
+            # tool result. Harmless on models that don't recognise it.
+            payload[0] = dict(payload[0])
+            payload[0]["content"] = f"{payload[0].get('content', '')}\n\n/no_think"
 
         response = await self._get().chat(
             model=self.model, messages=payload, tools=tools or None,

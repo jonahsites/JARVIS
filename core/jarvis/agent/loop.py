@@ -13,10 +13,11 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..config import JarvisConfig
-from ..llm.base import ChatResult, LLMClient
+from ..llm.base import ChatResult, LLMClient, assistant_turn, tool_turn
 from ..llm.prompts import strip_thinking, system_prompt
 from ..llm.router import Router
 from ..memory.db import Memory
@@ -25,6 +26,25 @@ from .registry import Registry
 log = logging.getLogger("jarvis.agent")
 
 MAX_TOOL_ROUNDS = 5
+
+
+@dataclass
+class AgentReply:
+    """What happened, not just what to say.
+
+    `ok` exists because a spoken apology is indistinguishable from a real
+    answer at the string level — the self-test was reporting pass on
+    "I couldn't reach a model just now" until this was added.
+    """
+
+    text: str
+    ok: bool = True
+    route: str = "local"
+    tools: list[str] = field(default_factory=list)
+    error: str = ""
+
+    def __str__(self) -> str:
+        return self.text
 
 
 class Agent:
@@ -37,6 +57,10 @@ class Agent:
         self._build_context = context_builder
 
     async def respond(self, transcript: str) -> str:
+        """Spoken text only — this is what the voice pipeline calls."""
+        return (await self.respond_detailed(transcript)).text
+
+    async def respond_detailed(self, transcript: str) -> AgentReply:
         started = time.monotonic()
         used_tools: list[str] = []
 
@@ -58,7 +82,10 @@ class Agent:
                 log.warning("%s failed: %s", client.name, exc)
                 fallback = self._router.fallback_for(client)
                 if fallback is None or escalated:
-                    return "I couldn't reach a model just now."
+                    return AgentReply(
+                        "I couldn't reach a model just now.",
+                        ok=False, route=client.name, error=str(exc),
+                    )
                 client, escalated = fallback, True
                 log.info("escalating to %s", client.name)
                 continue
@@ -75,43 +102,38 @@ class Agent:
             if not result.wants_tools:
                 break
 
-            messages.append({
-                "role": "assistant",
-                "content": result.content,
-                "tool_calls": [
-                    {"id": call.id, "type": "function",
-                     "function": {"name": call.name,
-                                  "arguments": json.dumps(call.arguments)}}
-                    for call in result.tool_calls
-                ],
-            })
+            # Neutral shape — each client renders it into its own dialect, so
+            # escalating mid-conversation doesn't carry the wrong formatting.
+            messages.append(assistant_turn(result))
 
             for call in result.tool_calls:
                 log.info("tool: %s(%s)", call.name, _brief(call.arguments))
                 output = await self._registry.call(call.name, call.arguments)
                 used_tools.append(call.name)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "name": call.name,
-                    "content": json.dumps(output, default=str)[:4000],
-                })
+                messages.append(
+                    tool_turn(call, json.dumps(output, default=str)[:4000])
+                )
 
             if round_index == MAX_TOOL_ROUNDS - 1:
                 log.warning("hit tool round limit")
 
         if result is None:
-            return "I couldn't reach a model just now."
+            return AgentReply("I couldn't reach a model just now.", ok=False,
+                              error="no result")
 
         spoken = strip_thinking(result.content)
+        ok = True
         if not spoken:
-            spoken = "Done." if used_tools else "I'm not sure how to answer that."
+            if used_tools:
+                spoken = "Done."
+            else:
+                spoken, ok = "I'm not sure how to answer that.", False
 
         self._memory.log_interaction(
             transcript, spoken, result.route, used_tools,
             int((time.monotonic() - started) * 1000),
         )
-        return spoken
+        return AgentReply(spoken, ok=ok, route=result.route, tools=used_tools)
 
 
 def _brief(arguments: dict[str, Any], limit: int = 120) -> str:

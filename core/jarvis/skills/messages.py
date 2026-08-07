@@ -110,17 +110,28 @@ class Messages:
             raise MessagesUnavailable(
                 "chat.db not found — is this a Mac with Messages set up?"
             )
-        try:
-            # immutable=1 means we never write, never lock, and never risk the
-            # file even if Messages.app is mid-write.
-            conn = sqlite3.connect(f"file:{CHAT_DB}?immutable=1", uri=True)
-            conn.row_factory = sqlite3.Row
-            return conn
-        except sqlite3.OperationalError as exc:
-            raise MessagesUnavailable(
-                "can't open chat.db — grant Full Disk Access to your terminal "
-                "in System Settings > Privacy & Security"
-            ) from exc
+        # immutable=1 is the safest mode — we never write, never lock, and
+        # can't disturb the file even if Messages.app is mid-write. But SQLite
+        # rejects it when a hot WAL is present, which happens whenever Messages
+        # has written recently. mode=ro is the fallback: still read-only, just
+        # participates in locking normally.
+        errors: list[str] = []
+        for uri in (f"file:{CHAT_DB}?immutable=1", f"file:{CHAT_DB}?mode=ro"):
+            try:
+                conn = sqlite3.connect(uri, uri=True)
+                conn.row_factory = sqlite3.Row
+                # Force an actual read — connect() is lazy, so it succeeds even
+                # when the permission is missing.
+                conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+                return conn
+            except sqlite3.Error as exc:
+                errors.append(f"{uri.split('?')[-1]}: {exc}")
+
+        raise MessagesUnavailable(
+            "can't open chat.db — grant Full Disk Access to your terminal in "
+            "System Settings > Privacy & Security, then fully quit it (Cmd-Q) "
+            "and reopen. (" + "; ".join(errors) + ")"
+        )
 
     def _query(self, where: str = "", params: tuple = (),
                limit: int = 30) -> list[Message]:
