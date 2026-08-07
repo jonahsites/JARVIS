@@ -49,6 +49,20 @@ def say(text: str) -> None:
 
 
 @app.command()
+def test(
+    stage: str = typer.Argument(
+        "all",
+        help="audio | tts | stt | wake | llm | mac | notion | messages | all",
+    ),
+) -> None:
+    """Exercise one subsystem at a time, so failures are isolated."""
+    jlog.setup(False)
+    from .selftest import run
+
+    raise typer.Exit(code=asyncio.run(run(stage)))
+
+
+@app.command()
 def onboard(
     restart: bool = typer.Option(False, "--restart",
                                  help="Start over instead of resuming."),

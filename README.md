@@ -275,11 +275,17 @@ ui/src/
 
 ```bash
 python -m jarvis run          # start everything
-python -m jarvis doctor       # check deps, permissions, credentials
+python -m jarvis doctor       # is it installed and permitted?
+python -m jarvis test all     # does it actually work? (see TESTING.md)
+python -m jarvis test stt     # one subsystem at a time
 python -m jarvis onboard      # re-run the setup conversation
 python -m jarvis say "hello"  # audition a voice
 python -m jarvis ask "..."    # one request through the agent, no microphone
 ```
+
+**First time running it? Follow [TESTING.md](TESTING.md).** It brings the
+subsystems up one at a time so a failure tells you which piece is wrong instead
+of just "it doesn't work".
 
 ## Roadmap
 
@@ -309,9 +315,11 @@ container's network proxy, so I've never seen its API. Send me the endpoints
   set `stt_engine = "whisper"` and expect it to be slower.
 - **`canary-qwen-2.5b` isn't used** — but what you wanted from it is. See below.
 - **I could not run any of this end to end.** It was built in a Linux container
-  with no microphone, no Ollama and no macOS. The pure logic is tested (see
-  below); the hardware paths are not. `jarvis doctor` exists for exactly this
-  reason — run it first.
+  with no microphone, no Ollama, no macOS and no Notion token. The pure logic is
+  tested (see below); every integration with your hardware and with third-party
+  APIs is written from documentation and has never executed. Assume the first
+  run breaks somewhere — `jarvis doctor` and `jarvis test` exist to tell you
+  exactly where. Start with [TESTING.md](TESTING.md).
 
 ## What's verified
 
