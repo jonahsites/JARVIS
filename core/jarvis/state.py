@@ -14,25 +14,35 @@ from typing import Callable
 
 
 class AgentState(str, Enum):
-    IDLE = "idle"           # blue — waiting for the wake word
+    IDLE = "idle"            # blue — waiting for the wake word
     LISTENING = "listening"  # green — capturing your speech
-    THINKING = "thinking"    # yellow — routing, calling tools, generating
+    THINKING = "thinking"    # amber — routing, calling tools, generating
     SPEAKING = "speaking"    # multicolour — Kokoro is playing
+    WORKING = "working"      # violet — busy in the background, not with you
     OFFLINE = "offline"      # grey — daemon down or a subsystem failed
 
 
-# Guards against nonsense transitions (e.g. SPEAKING straight back to LISTENING
-# without passing through IDLE), which would make the glob flicker.
+# WORKING is deliberately a sibling of IDLE rather than of THINKING. THINKING
+# means "you asked me something and I'm on it"; WORKING means "I'm crawling
+# Notion and you can still interrupt me at any moment". Everything that works
+# from idle works from working.
 _ALLOWED: dict[AgentState, set[AgentState]] = {
     AgentState.IDLE: {AgentState.LISTENING, AgentState.THINKING, AgentState.SPEAKING,
-                      AgentState.OFFLINE},
-    AgentState.LISTENING: {AgentState.THINKING, AgentState.IDLE, AgentState.OFFLINE},
+                      AgentState.WORKING, AgentState.OFFLINE},
+    AgentState.LISTENING: {AgentState.THINKING, AgentState.IDLE, AgentState.WORKING,
+                           AgentState.OFFLINE},
     AgentState.THINKING: {AgentState.SPEAKING, AgentState.IDLE, AgentState.LISTENING,
-                          AgentState.OFFLINE},
+                          AgentState.WORKING, AgentState.OFFLINE},
     AgentState.SPEAKING: {AgentState.IDLE, AgentState.LISTENING, AgentState.THINKING,
-                          AgentState.OFFLINE},
-    AgentState.OFFLINE: {AgentState.IDLE},
+                          AgentState.WORKING, AgentState.OFFLINE},
+    AgentState.WORKING: {AgentState.IDLE, AgentState.LISTENING, AgentState.THINKING,
+                         AgentState.SPEAKING, AgentState.OFFLINE},
+    AgentState.OFFLINE: {AgentState.IDLE, AgentState.WORKING},
 }
+
+# States where JARVIS isn't engaged with you, so the wake word should be live
+# and a proactive nudge is allowed.
+AVAILABLE = {AgentState.IDLE, AgentState.WORKING}
 
 
 class StateMachine:
@@ -64,5 +74,9 @@ class StateMachine:
             return True
 
     def can_interrupt(self) -> bool:
-        """Proactive speech only cuts in when nothing is already happening."""
-        return self._state is AgentState.IDLE
+        """Proactive speech only cuts in when you aren't mid-exchange.
+
+        Background work doesn't count as being busy — you can't see it and
+        it isn't a conversation.
+        """
+        return self._state in AVAILABLE

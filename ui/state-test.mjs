@@ -49,7 +49,7 @@ await page.goto('http://127.0.0.1:4173/', { waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
 
 const results = [];
-for (const [state, level] of [['idle', 0], ['listening', 0.55], ['thinking', 0], ['speaking', 0.6]]) {
+for (const [state, level] of [['idle', 0], ['listening', 0.55], ['thinking', 0], ['speaking', 0.6], ['working', 0]]) {
   send('state', { state });
   for (let i = 0; i < 14; i++) { send('level', { rms: level }); await page.waitForTimeout(90); }
   await page.waitForTimeout(600);

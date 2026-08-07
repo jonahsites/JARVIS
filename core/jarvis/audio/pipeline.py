@@ -20,7 +20,7 @@ import numpy as np
 
 from ..bus import EV_LEVEL, EV_TRANSCRIPT, Bus
 from ..config import JarvisConfig
-from ..state import AgentState, StateMachine
+from ..state import AVAILABLE, AgentState, StateMachine
 from .stt import STT
 from .tts import TTS
 from .vad import UtteranceDetector
@@ -204,7 +204,8 @@ class VoicePipeline:
             chunk = await self._frames.get()
 
             rms = float(np.sqrt(np.mean(chunk ** 2)))
-            if self._state.state in (AgentState.IDLE, AgentState.LISTENING):
+            if self._state.state in (AgentState.IDLE, AgentState.LISTENING,
+                                     AgentState.WORKING):
                 await self._bus.emit(EV_LEVEL, rms=min(1.0, rms * 8))
 
             if self._listening:
@@ -227,8 +228,10 @@ class VoicePipeline:
                     await self.begin_listening()
                 continue
 
-            # Idle: only the wake word runs. Nothing is buffered or stored.
-            if self._state.state is AgentState.IDLE and time.monotonic() >= self._muted_until:
+            # Idle or working in the background: only the wake word runs, and
+            # nothing is buffered or stored. Working has to be included or a
+            # Notion crawl would make it deaf for its duration.
+            if self._state.state in AVAILABLE and time.monotonic() >= self._muted_until:
                 pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16)
                 if self.wake.feed(pcm16):
                     await self.begin_listening()

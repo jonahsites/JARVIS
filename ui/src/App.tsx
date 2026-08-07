@@ -18,6 +18,7 @@ const LABEL: Record<string, string> = {
   listening: 'go ahead',
   thinking: 'thinking',
   speaking: 'speaking',
+  working: 'catching up on Notion',
   offline: 'daemon not running',
 };
 

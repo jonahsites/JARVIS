@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 from .agent.capabilities import CapabilityLedger
@@ -96,12 +97,39 @@ class Daemon:
         # permission prompt). Keeps proactive speech out of the gaps.
         self._in_conversation = False
         self._pending_form: asyncio.Future[dict[str, str]] | None = None
+        # Counted, not a flag: the Notion refresh and the note crawl overlap,
+        # and the first one to finish must not clear the other's state.
+        self._background_jobs = 0
 
     # ---- glue ------------------------------------------------------------
 
     def _on_state_change(self, previous: AgentState, current: AgentState) -> None:
         log.info("%s -> %s", previous.value, current.value)
         asyncio.create_task(self.bus.emit(EV_STATE, state=current.value))
+
+        # Something finished talking to you while a background job is still
+        # running — go back to showing that rather than a plain idle.
+        if current is AgentState.IDLE and self._background_jobs:
+            asyncio.create_task(self.state.transition(AgentState.WORKING))
+
+    @contextlib.asynccontextmanager
+    async def _working(self, label: str):
+        """Show background activity on the glob for the duration of a job.
+
+        Only claims the glob when nothing else is using it, and only releases
+        it if it still holds it — so a job finishing mid-conversation can't
+        yank the colour out from under a reply.
+        """
+        self._background_jobs += 1
+        if self._background_jobs == 1 and self.state.state is AgentState.IDLE:
+            await self.state.transition(AgentState.WORKING)
+        log.debug("background: %s", label)
+        try:
+            yield
+        finally:
+            self._background_jobs -= 1
+            if self._background_jobs == 0 and self.state.state is AgentState.WORKING:
+                await self.state.transition(AgentState.IDLE)
 
     def _build_context(self) -> str:
         """Rebuilt every turn so the model never reasons from stale state.
@@ -160,13 +188,15 @@ class Daemon:
     async def _notion_loop(self) -> None:
         while True:
             await asyncio.sleep(900)  # 15 min
-            await self._refresh_notion()
+            async with self._working("notion refresh"):
+                await self._refresh_notion()
 
     async def _crawl_loop(self) -> None:
         """Incremental — unchanged pages are skipped, so this is cheap."""
         while True:
             try:
-                await self.crawler.crawl()
+                async with self._working("note crawl"):
+                    await self.crawler.crawl()
             except Exception:
                 log.exception("note crawl failed")
             await asyncio.sleep(3600)
@@ -323,6 +353,9 @@ class Daemon:
         finally:
             self._in_conversation = False
         self._pending_form: asyncio.Future[dict[str, str]] | None = None
+        # Counted, not a flag: the Notion refresh and the note crawl overlap,
+        # and the first one to finish must not clear the other's state.
+        self._background_jobs = 0
 
     async def _first_run(self) -> None:
         await asyncio.sleep(2)  # let the UI connect so you can see it react
@@ -335,6 +368,9 @@ class Daemon:
         finally:
             self._in_conversation = False
         self._pending_form: asyncio.Future[dict[str, str]] | None = None
+        # Counted, not a flag: the Notion refresh and the note crawl overlap,
+        # and the first one to finish must not clear the other's state.
+        self._background_jobs = 0
 
     async def stop(self) -> None:
         for task in self._tasks:

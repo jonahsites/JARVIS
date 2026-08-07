@@ -231,3 +231,5 @@ button.yes:hover {
   font-size: 0.75rem;
   color: var(--dim);
 }
+
+.status-working { color: #a97ef2; }

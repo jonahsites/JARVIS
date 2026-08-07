@@ -14,6 +14,7 @@ export type JarvisState =
   | 'listening'
   | 'thinking'
   | 'speaking'
+  | 'working'
   | 'offline';
 
 export interface GlobConfig {
@@ -108,6 +109,21 @@ export const STATES: Record<JarvisState, GlobConfig> = {
     cameraSpeedY: 0.16,
   },
 
+  // Busy in the background — crawling Notion, refreshing assignments. Violet,
+  // because it has to be unmistakable against idle blue at a glance. Slower
+  // and calmer than thinking: it isn't waiting on you and doesn't want your
+  // attention, it just shouldn't look asleep.
+  working: {
+    ...BASE,
+    perlinTime: 20.0,
+    perlinMorph: 4.0,
+    perlinDNoise: 1.5,
+    tint: [0.60, 0.24, 1.0],
+    tintMix: 0.76,
+    gain: 1.25,
+    cameraSpeedY: 0.18,
+  },
+
   // Daemon not running. Nearly still, desaturated — obviously not alive.
   offline: {
     ...BASE,
@@ -128,6 +144,7 @@ export const TRANSITION: Record<JarvisState, number> = {
   thinking: 0.45,
   speaking: 0.35,
   idle: 1.1,
+  working: 0.9,
   offline: 1.5,
 };
 

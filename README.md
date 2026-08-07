@@ -144,6 +144,16 @@ Your Three.js component, rebuilt. It reflects state through colour:
 | listening | green, deforms with your voice | capturing what you say |
 | thinking | amber, fast churn | routing, calling tools, generating |
 | speaking | full multicolour | Kokoro is playing |
+| working | violet, steady | crawling Notion in the background |
+
+Each hue keeps the multicolour underneath it — the tint rotates each pixel's
+hue toward the target rather than painting over it, so the surface stays varied
+while the palette clearly reads as one colour.
+
+`working` is a sibling of `idle`, not of `thinking`. Thinking means *you asked
+me something*; working means *I'm busy with my own housekeeping and you can
+interrupt me whenever*. The wake word stays live throughout, and a proactive
+nudge can still fire.
 
 Transitions are tweened, not switched — idle→listening is the slowest at 0.85s.
 
