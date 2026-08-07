@@ -57,8 +57,8 @@ class VoicePipeline:
 
         self.wake = WakeWord(config.voice.wake_model, config.voice.wake_threshold)
         self.vad = UtteranceDetector(config.voice.silence_ms, config.voice.max_utterance_s)
-        self.stt = STT(config.voice.stt_engine, config.voice.stt_model,
-                       config.voice.whisper_model)
+        self.stt = STT(config.voice.stt_engine, config.voice.qwen_model,
+                       config.voice.stt_model, config.voice.whisper_model)
         self.tts = TTS(config.voice.tts_voice, config.voice.tts_speed,
                        on_level=self._push_level_threadsafe)
 

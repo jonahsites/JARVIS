@@ -44,26 +44,28 @@ def register_all(registry: Registry, memory: Memory, schedule: ScheduleResolver,
             "day_type": schedule.day_type(),
         }
 
+    # Classes come from get_class_schedule in skills/notion/tools.py, which has
+    # the real course rows. This one only answers the A/B question, so it still
+    # works with no Notion token.
     @registry.register(
-        "get_schedule_today",
-        "Which classes he has today and in what order, based on the A/B rotation. "
-        "Use for 'what do I have today', 'what's my next class', 'am I on an A day'.",
-        NO_ARGS,
+        "get_day_type",
+        "Whether today (or a given day) is an A day or a B day.",
+        {
+            "type": "object",
+            "properties": {"day": {"type": "string", "description": "YYYY-MM-DD"}},
+        },
     )
-    async def get_schedule_today() -> dict[str, Any]:
-        day_type = schedule.day_type()
-        if day_type is None:
-            return {"school": False, "next_school_day": str(schedule.next_school_day())}
-        # Populated from Notion once the token is set; empty until then.
-        courses = _COURSE_CACHE.get("rows", [])
-        current, when = schedule.current_or_next_class(courses)
+    async def get_day_type(day: str | None = None) -> dict[str, Any]:
+        from datetime import date as _date
+
+        target = _date.fromisoformat(day) if day else schedule.now().date()
+        day_type = schedule.day_type(target)
         return {
-            "school": True,
+            "date": target.isoformat(),
             "day_type": day_type,
-            "classes": schedule.classes_today(courses),
-            "current_or_next": current,
-            "relation": when,
-            "summary": schedule.describe_today(courses),
+            "school": day_type is not None,
+            "next_school_day": (None if day_type
+                                else schedule.next_school_day(target).isoformat()),
         }
 
     # ---- apps ------------------------------------------------------------
@@ -238,14 +240,4 @@ def register_all(registry: Registry, memory: Memory, schedule: ScheduleResolver,
     async def list_permissions() -> dict[str, Any]:
         return {"granted": ledger.granted_list()}
 
-    log.info("registered %d tools: %s", len(registry.names()), ", ".join(registry.names()))
-
-
-# Refreshed from Notion at startup and on a timer once NOTION_TOKEN is set.
-# Until then get_schedule_today still reports the correct A/B letter, just
-# without course names attached.
-_COURSE_CACHE: dict[str, list[dict[str, Any]]] = {"rows": []}
-
-
-def set_courses(rows: list[dict[str, Any]]) -> None:
-    _COURSE_CACHE["rows"] = rows
+    log.info("registered %d base tools", len(registry.names()))

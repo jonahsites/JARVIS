@@ -53,9 +53,11 @@ class VoiceConfig(BaseModel):
     # permission on macOS; `jarvis doctor` tells you if it's missing.
     hotkey: str = "<alt>+<space>"
 
-    # Apple Silicon: parakeet is the fastest real-time option. "whisper" falls
-    # back to mlx-whisper large-v3-turbo if parakeet won't load.
-    stt_engine: Literal["parakeet", "whisper"] = "parakeet"
+    # Qwen3-ASR on MLX — the open-source Qwen ASR model that actually runs on
+    # Apple Silicon, standing in for the canary-qwen you specced. Falls through
+    # to parakeet then whisper if it can't load.
+    stt_engine: Literal["qwen", "parakeet", "whisper"] = "qwen"
+    qwen_model: str = "Qwen/Qwen3-ASR-0.6B"  # or Qwen/Qwen3-ASR-1.7B for 1.99% WER
     stt_model: str = "mlx-community/parakeet-tdt-0.6b-v2"
     whisper_model: str = "mlx-community/whisper-large-v3-turbo"
 

@@ -9,22 +9,22 @@ reply is generated on-device by default, and the speech is synthesised
 on-device. Nothing leaves the machine unless a request is complex enough to be
 escalated to OpenRouter.
 
-**Status: Phase 1 is built.** The voice loop and the UI work end to end. Notion,
-Messages and LectureSynth have their interfaces defined but aren't wired yet —
-see [Roadmap](#roadmap).
+**Status: Phases 1–2 are built.** The voice loop, the UI, and Notion
+(assignments, notes search, A/B schedule) all work. Messages and LectureSynth
+are next — see [Roadmap](#roadmap).
 
 ---
 
 ## How it works
 
 ```
-  mic ──▶ wake word ──▶ VAD ──▶ Parakeet ──▶ router ──┬─▶ qwen3:8b (local)
-       always on      end of     speech to            └─▶ OpenRouter (hard stuff)
-       "hey jarvis"   turn       text                       │
-                                                            ▼
-  speakers ◀── Kokoro ◀── strip reasoning ◀── tool loop ◀────┘
+  mic ──▶ wake word ──▶ VAD ──▶ Qwen3-ASR ──▶ router ──┬─▶ qwen3:8b (local)
+       always on      end of     speech to             └─▶ OpenRouter (hard stuff)
+       "hey jarvis"   turn       text                        │
+                                                             ▼
+  speakers ◀── Kokoro ◀── strip reasoning ◀── tool loop ◀─────┘
                                                     │
-   browser tab ◀── WebSocket ◀── state ─────────────┘
+   browser tab ◀── WebSocket ◀── state ─────────────┘         21 tools
    (the glob)                    idle/listening/thinking/speaking
 ```
 
@@ -139,6 +139,64 @@ cd ui && npm run build && npm i --no-save playwright ws && node state-test.mjs
 
 ---
 
+## Notes search
+
+Your notes live in a structure that defeats the obvious approach. Six per-course
+Unit databases hang off the Notes page, and each note is buried about four levels
+down:
+
+```
+AP Calculus AB Units              (database)
+ └─ Summer Course                 (row → unit page)
+     └─ callout
+         └─ toggle "Topics/Chapters"
+             └─ callout
+                 └─ toggle "Chapter 5: Integrals"
+                     ├─ Riemann Sums And Area Calculation   (child page)
+                     ├─ Volumes                             (child page)
+                     └─ Definite Integral Calculus Lecture  (child page)
+```
+
+Two things follow from that. The chapter name exists **only as toggle text** —
+there's no property holding it — so the crawler carries a breadcrumb down the
+tree. And the databases have no tags, no topics, no relations: a title is the
+only metadata a note has.
+
+Which matters because **Notion's search API indexes titles only.** Ask it about
+"the squeeze theorem" and it returns nothing, even if the phrase is sitting in a
+note body. So JARVIS crawls the tree, extracts every note's text, and keeps a
+local SQLite FTS5 index. Search is then instant, offline, and finds notes by what
+is *in* them:
+
+```
+"uh the squeeze theorem"           → Section 1: The Definition of a Limit
+"notes about rotating a region     → Volumes
+ around an axis"
+```
+
+Neither title contains any of those words. The crawl is incremental — pages whose
+`last_edited_time` hasn't moved are skipped — and re-runs hourly, or on demand
+when you say *"re-scan my notes."*
+
+## Speech recognition
+
+You specced `nvidia/canary-qwen-2.5b`. It's NeMo, built for CUDA, and it
+transcribes in batch — it won't run on a Mac at all. But what you actually
+wanted, a Qwen ASR model, does exist for Apple Silicon: **Qwen3-ASR
+reimplemented on MLX** (`mlx-qwen3-asr`, Apache 2.0). It beats the substitute I'd
+originally picked:
+
+| engine | WER (LibriSpeech clean) | 2.5s clip, M4 Pro | licence |
+|---|---|---|---|
+| **Qwen3-ASR 0.6B** | **2.29%** | **0.11s** (8-bit) | Apache 2.0 |
+| Parakeet-TDT 0.6B | ~2.5% | ~0.3s | CC-BY-4.0 |
+| Whisper large-v3-turbo | ~3% | ~0.5s | MIT |
+
+It also takes a numpy array directly, so there's no temp-WAV round trip per
+utterance. All three are free and open source, and they fall through to each
+other — a missing package costs accuracy, not startup. `Qwen/Qwen3-ASR-1.7B`
+drops WER to 1.99% if you want to trade 2 GB of RAM for it.
+
 ## Layout
 
 ```
@@ -150,6 +208,7 @@ core/jarvis/
   llm/               ollama, openrouter, the router, prompts
   agent/             tool loop, tool registry, the capability ledger
   skills/            macOS control, A/B schedule, tool definitions
+  skills/notion/     REST client, note crawler + FTS index, assignments
   memory/            local SQLite — tabs, apps, facts, history
   doctor.py          checks every dependency and permission
 
@@ -174,12 +233,14 @@ python -m jarvis ask "..."    # one request through the agent, no microphone
 **Phase 1 — done.** Voice loop, glob UI, capability ledger, memory, macOS app
 and Chrome control, A/B schedule logic, doctor.
 
-**Phase 2 — Notion.** Assignments (read, add, update), notes search across page
-bodies and the Drive database, live class schedule from Courses, Days Off
-feeding the A/B rotation.
+**Phase 2 — done.** Notion: assignments (read, add, update, rank), full-text
+note search, live class schedule from Courses, Days Off feeding the A/B
+rotation.
 
 **Phase 3 — Messages and LectureSynth.** iMessage read/send via `chat.db` and
-AppleScript. LectureSynth capture → auto-added assignments.
+AppleScript. LectureSynth capture → auto-added assignments. *Still blocked on
+the LectureSynth API surface — your ngrok URL is unreachable from my build
+container, so I need the endpoints from you.*
 
 **Phase 4 — Proactivity and onboarding.** The autonomous daemon that speaks up
 unprompted, and the guided first-run that learns your projects and habits.
@@ -190,10 +251,7 @@ unprompted, and the guided first-run that learns your projects and habits.
   macOS APIs.
 - **Apple Silicon for the fast path.** The MLX speech models need it. On Intel,
   set `stt_engine = "whisper"` and expect it to be slower.
-- **`canary-qwen-2.5b` isn't used.** It's a NeMo/CUDA batch model — it won't run
-  on a Mac, and even on NVIDIA its batch design fights the latency this needs.
-  Parakeet-TDT is the Apple Silicon equivalent. If you ever move to an NVIDIA
-  box, add a `CanaryEngine` to `audio/stt.py` implementing the same two methods.
+- **`canary-qwen-2.5b` isn't used** — but what you wanted from it is. See below.
 - **I could not run any of this end to end.** It was built in a Linux container
   with no microphone, no Ollama and no macOS. The pure logic is tested (see
   below); the hardware paths are not. `jarvis doctor` exists for exactly this
@@ -203,9 +261,13 @@ unprompted, and the guided first-run that learns your projects and habits.
 
 Tested here: the A/B rotation (alternation, weekends, days off, backwards from
 the anchor), the capability ledger (one prompt per capability across many
-arguments, persistence across restart, revoke and re-ask), config parsing, the
-UI typecheck and build, GLSL compilation, and all four glob states rendered
-through a fake daemon.
+arguments, persistence across restart, revoke and re-ask), note search over
+synthetic notes shaped like your real Calc tree, assignment priority ranking,
+course-name resolution (`calc`, `apes`, `gsa`, `gym` → the right course), tool
+schema serialisation for both LLM providers, graceful behaviour with no Notion
+token, config parsing, the UI typecheck and build, GLSL compilation, and all
+four glob states rendered through a fake daemon.
 
-Not tested here: microphone capture, wake word, Parakeet, Kokoro, Ollama, the
-hotkey, and AppleScript. Those need your machine.
+Not tested here: microphone capture, wake word, Qwen3-ASR, Kokoro, Ollama, the
+hotkey, AppleScript, and any real Notion API call — the token isn't set in the
+build container. Those need your machine.

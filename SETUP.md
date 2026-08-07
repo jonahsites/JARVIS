@@ -141,8 +141,13 @@ you're naming this after.
 
 **Replies are too chatty** → set `style = "terse"`.
 
-**Transcription is wrong on names** → set `stt_engine = "whisper"`. Slower but
-better on proper nouns.
+**Transcription is wrong on names** → try `qwen_model = "Qwen/Qwen3-ASR-1.7B"`
+(1.99% WER, 3.4 GB), or `stt_engine = "whisper"`, which is slower but handles
+proper nouns well.
+
+**It can't find notes you know exist** → say *"re-scan my notes"*, or run
+`python -m jarvis ask "reindex notes"`. The crawler runs hourly and is
+incremental, so a note added five minutes ago may not be indexed yet.
 
 ---
 
@@ -180,6 +185,8 @@ everything. `python -m jarvis run -v` logs `routing to local` or
 Everything JARVIS remembers is in `var/`, which is gitignored:
 
 - `var/jarvis.db` — capability grants, observed tabs and apps, facts, history
+- `var/notes.db` — the full-text index of your Notion notes
 - `var/jarvis.log` — everything it thought, rotated at 5 MB
 
-Delete `var/jarvis.db` to reset it completely, including permissions.
+Delete `var/jarvis.db` to reset it completely, including permissions. Delete
+`var/notes.db` to force a full re-crawl from scratch.

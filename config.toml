@@ -11,9 +11,12 @@ wake_threshold = 0.5
 # Fallback for when the wake word mishears you. Needs macOS Accessibility.
 hotkey = "<alt>+<space>"
 
-# "parakeet" is fastest on Apple Silicon. "whisper" is the fallback and is
-# slightly more accurate on messy audio.
-stt_engine = "parakeet"
+# "qwen" is Qwen3-ASR on MLX — the open-source Qwen ASR model that runs on
+# Apple Silicon, replacing the canary-qwen you specced (NeMo/CUDA, Mac-hostile).
+# 2.29% WER, ~0.1s per utterance. Falls through to parakeet then whisper if it
+# can't load, so a missing package costs accuracy rather than stopping startup.
+stt_engine = "qwen"
+qwen_model = "Qwen/Qwen3-ASR-0.6B"    # Qwen/Qwen3-ASR-1.7B is 1.99% WER, 3.4 GB
 stt_model = "mlx-community/parakeet-tdt-0.6b-v2"
 whisper_model = "mlx-community/whisper-large-v3-turbo"
 

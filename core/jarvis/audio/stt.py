@@ -1,16 +1,26 @@
 """Speech to text.
 
-You originally specced nvidia/canary-qwen-2.5b. It's a NeMo model built for
-CUDA and it transcribes in batch rather than streaming — on Apple Silicon it
-either won't run or will add seconds of latency to every single thing you say,
-which is the opposite of "yell across the room and get an answer".
+You specced nvidia/canary-qwen-2.5b. It's a NeMo model built for CUDA and it
+transcribes in batch rather than streaming — on Apple Silicon it won't run at
+all, which is why I went looking for a free, open-source replacement.
 
-Parakeet-TDT via MLX is the Apple Silicon equivalent: same family of accuracy,
-runs on the Neural Engine, transcribes a 5-second utterance in well under a
-second. mlx-whisper large-v3-turbo is the fallback if parakeet won't load.
+The good news is that what you actually wanted — a Qwen ASR model — exists for
+Apple Silicon. Qwen3-ASR has been reimplemented on Apple's MLX framework
+(mlx-qwen3-asr, Apache 2.0), and on the numbers it beats what I'd picked as a
+substitute:
 
-If you ever move JARVIS to a machine with an NVIDIA GPU, add a CanaryEngine
-here implementing the same two methods and switch stt_engine in config.toml.
+    engine          WER (LibriSpeech clean)   2.5s clip on M4 Pro
+    Qwen3-ASR 0.6B  2.29%                     0.11s (8-bit) / 0.46s (fp16)
+    Parakeet-TDT    ~2.5%                     ~0.3s
+    Whisper turbo   ~3%                       ~0.5s
+
+It also takes a numpy array directly, so unlike Parakeet there's no temp WAV
+round-trip on every utterance.
+
+So: Qwen3-ASR is the default, Parakeet is the first fallback, Whisper the
+second. All three are free and open source. Switch with stt_engine in
+config.toml — they share the same two-method interface, and so would a
+CanaryEngine if you ever move to an NVIDIA box.
 """
 
 from __future__ import annotations
@@ -31,6 +41,27 @@ SAMPLE_RATE = 16_000
 class STTEngine(Protocol):
     def load(self) -> None: ...
     def transcribe(self, audio: np.ndarray) -> str: ...
+
+
+class QwenASREngine:
+    """Qwen3-ASR on MLX. The closest thing to what you originally asked for
+    that actually runs on this machine."""
+
+    def __init__(self, model_id: str = "Qwen/Qwen3-ASR-0.6B"):
+        self.model_id = model_id
+        self._session = None
+
+    def load(self) -> None:
+        from mlx_qwen3_asr import Session
+
+        # Session keeps weights resident; the module-level transcribe() helper
+        # reloads the model per call, which would add ~2s to every utterance.
+        self._session = Session(model=self.model_id)
+        log.info("stt ready: qwen3-asr (%s)", self.model_id)
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        result = self._session.transcribe(audio.astype(np.float32))
+        return (getattr(result, "text", "") or "").strip()
 
 
 class ParakeetEngine:
@@ -78,33 +109,50 @@ class WhisperEngine:
 
 
 class STT:
-    """Wraps an engine and falls back to Whisper if the primary won't load."""
+    """Loads the configured engine, walking down the fallback chain if it fails.
 
-    def __init__(self, engine: str = "parakeet", parakeet_model: str = "",
-                 whisper_model: str = ""):
-        if engine == "parakeet":
-            self._engine: STTEngine = ParakeetEngine(
-                parakeet_model or "mlx-community/parakeet-tdt-0.6b-v2"
-            )
-            self._fallback: STTEngine | None = WhisperEngine(
-                whisper_model or "mlx-community/whisper-large-v3-turbo"
-            )
-        else:
-            self._engine = WhisperEngine(whisper_model or "mlx-community/whisper-large-v3-turbo")
-            self._fallback = None
+    A missing optional package shouldn't stop JARVIS starting — it should just
+    quietly cost you some accuracy, and say so in the log.
+    """
+
+    def __init__(self, engine: str = "qwen", qwen_model: str = "",
+                 parakeet_model: str = "", whisper_model: str = ""):
+        qwen = lambda: QwenASREngine(qwen_model or "Qwen/Qwen3-ASR-0.6B")  # noqa: E731
+        parakeet = lambda: ParakeetEngine(  # noqa: E731
+            parakeet_model or "mlx-community/parakeet-tdt-0.6b-v2"
+        )
+        whisper = lambda: WhisperEngine(  # noqa: E731
+            whisper_model or "mlx-community/whisper-large-v3-turbo"
+        )
+
+        chains: dict[str, list] = {
+            "qwen": [qwen, parakeet, whisper],
+            "parakeet": [parakeet, qwen, whisper],
+            "whisper": [whisper],
+        }
+        self._chain = chains.get(engine, chains["qwen"])
+        self._engine: STTEngine | None = None
 
     def load(self) -> None:
-        try:
-            self._engine.load()
-        except Exception as exc:
-            if self._fallback is None:
-                raise
-            log.warning("primary stt failed to load (%s) — falling back to whisper", exc)
-            self._engine = self._fallback
-            self._fallback = None
-            self._engine.load()
+        errors: list[str] = []
+        for factory in self._chain:
+            candidate = factory()
+            try:
+                candidate.load()
+                self._engine = candidate
+                return
+            except Exception as exc:
+                name = type(candidate).__name__
+                errors.append(f"{name}: {exc}")
+                log.warning("%s unavailable (%s) — trying next engine", name, exc)
+
+        raise RuntimeError(
+            "no speech recognition engine could load:\n  " + "\n  ".join(errors)
+        )
 
     def transcribe(self, audio: np.ndarray) -> str:
+        if self._engine is None:
+            raise RuntimeError("STT.load() was never called")
         if audio.size < SAMPLE_RATE * 0.25:  # under 250 ms is a cough, not a sentence
             return ""
         started = time.monotonic()

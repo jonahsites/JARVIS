@@ -87,11 +87,31 @@ async def run_checks() -> int:
         checks.append(_import_check(module, package, why))
 
     if platform.machine() == "arm64":
-        stt = _import_check("parakeet_mlx", "parakeet-mlx", "speech recognition")
-        if stt.status == FAIL:
-            stt.status = WARN
-            stt.fix = "pip install parakeet-mlx  (falls back to mlx-whisper for now)"
-        checks.append(stt)
+        # The engines fall through to each other, so any one of them working is
+        # enough to run — the others only cost accuracy or speed.
+        engines = {
+            "mlx_qwen3_asr": "mlx-qwen3-asr",
+            "parakeet_mlx": "parakeet-mlx",
+            "mlx_whisper": "mlx-whisper",
+        }
+        working = []
+        for module, package in engines.items():
+            try:
+                __import__(module)
+                working.append(package)
+            except Exception:
+                pass
+
+        if not working:
+            checks.append(Check("speech recognition", FAIL, "no engine installed",
+                                "pip install mlx-qwen3-asr"))
+        elif len(working) == len(engines):
+            checks.append(Check("speech recognition", OK, ", ".join(working)))
+        else:
+            missing = [p for p in engines.values() if p not in working]
+            checks.append(Check("speech recognition", WARN,
+                                f"{', '.join(working)} (no fallback: {', '.join(missing)})",
+                                f"pip install {' '.join(missing)}"))
 
     # ---- audio devices ---------------------------------------------------
 
