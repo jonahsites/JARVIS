@@ -1,0 +1,33 @@
+# secrets
+.env
+.env.local
+
+# jarvis runtime state — memory, capability grants, audio cache, logs
+var/
+*.db
+*.db-wal
+*.db-shm
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# models downloaded at setup time (multi-GB, never commit)
+models/
+
+# node
+node_modules/
+dist/
+dist-electron/
+.vite/
+
+# macos
+.DS_Store
+
+# typescript incremental build cache
+*.tsbuildinfo

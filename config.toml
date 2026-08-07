@@ -1,0 +1,88 @@
+# JARVIS behaviour. Secrets live in .env; this file is safe to commit.
+# Everything here has a working default — you only need to touch it to change
+# your mind about something. Restart the daemon after editing.
+
+[voice]
+# openWakeWord ships this pretrained, so there's no training step.
+wake_model = "hey_jarvis_v0.1"
+# Lower = wakes more easily but more false triggers. 0.4-0.6 is the useful range.
+wake_threshold = 0.5
+
+# Fallback for when the wake word mishears you. Needs macOS Accessibility.
+hotkey = "<alt>+<space>"
+
+# "parakeet" is fastest on Apple Silicon. "whisper" is the fallback and is
+# slightly more accurate on messy audio.
+stt_engine = "parakeet"
+stt_model = "mlx-community/parakeet-tdt-0.6b-v2"
+whisper_model = "mlx-community/whisper-large-v3-turbo"
+
+# Male voice. Alternatives: bm_george (British — sounds most like the JARVIS
+# you named this after), am_puck, am_adam, am_eric, am_liam, bm_lewis, bm_fable.
+# Audition any of them instantly with:  python -m jarvis say "test one two"
+tts_voice = "am_michael"
+tts_speed = 1.05
+
+# How long a pause ends your turn. Lower feels snappier but will cut you off
+# mid-sentence when you pause to think.
+silence_ms = 700
+max_utterance_s = 30.0
+
+[llm]
+# Local first, escalate on complexity.
+escalate_on_tool_depth = 2
+escalate_on_token_estimate = 1500
+escalate_keywords = [
+  "compare", "summarize", "explain why", "plan", "figure out",
+  "draft", "write me", "analyze", "what should i",
+]
+local_timeout_s = 20.0
+cloud_timeout_s = 60.0
+
+[persona]
+name = "Jarvis"
+user_name = "Jonah"
+# "warm" = conversational. "terse" = one short sentence, no filler.
+style = "warm"
+
+[schedule]
+# ---------------------------------------------------------------------------
+# THE ONE THING YOU SHOULD CHECK FIRST.
+#
+# Your school runs an A/B block rotation. Notion's API won't expose the code
+# inside your `Class today?` formula, so I couldn't read your actual rule.
+# This assumes A and B alternate across school days, and that days in your
+# Days Off database don't advance the rotation.
+#
+# Set anchor_date to any single day you know for certain and everything else
+# derives from it — forwards and backwards. If Jarvis ever says the wrong
+# letter, this is the only line you need to fix.
+# ---------------------------------------------------------------------------
+anchor_date = 2026-09-08
+anchor_day_type = "A"
+school_weekdays = [0, 1, 2, 3, 4]   # Monday = 0
+timezone = "America/New_York"
+
+[memory]
+# What it watches passively: which apps and tabs are open, their titles and
+# URLs, and when. Page *contents* are never read.
+observe_tabs = true
+observe_apps = true
+observe_page_content = false
+poll_seconds = 20
+retention_days = 90
+
+[proactive]
+# Fully autonomous — it speaks when it judges something is worth saying.
+# The limits below stop "autonomous" turning into "constantly interrupting".
+enabled = true
+max_per_hour = 4
+quiet_hours = ["22:30", "07:00"]
+focus_apps = ["zoom.us", "FaceTime"]
+tick_seconds = 60
+
+[messages]
+# It says what it's about to send, then sends unless you say stop.
+cancel_window_s = 3.0
+# Names here are never texted, no matter what.
+blocklist = []
