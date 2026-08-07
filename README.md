@@ -71,30 +71,48 @@ a misheard name.
 
 Full detail in **[SETUP.md](SETUP.md)**. The short version:
 
+Dependencies:
+
 ```bash
-# 1. dependencies
 brew install ollama portaudio
 ollama serve &
 ollama pull qwen3:8b
+```
 
-# 2. python
-cd core && python3.11 -m venv .venv && source .venv/bin/activate
+Python:
+
+```bash
+cd core
+python3.11 -m venv .venv
+source .venv/bin/activate
 pip install -e .
+```
 
-# 3. credentials
-cp ../.env.example ../.env    # add NOTION_TOKEN and OPENROUTER_API_KEY
+Credentials — put your Notion token and OpenRouter key in the copied file:
 
-# 4. check everything before you run it
+```bash
+cp ../.env.example ../.env
+```
+
+Check everything before running it:
+
+```bash
 python -m jarvis doctor
+python -m jarvis test all
+```
 
-# 5. go
+Go:
+
+```bash
 python -m jarvis run
 ```
 
 Then in another terminal:
 
 ```bash
-cd ui && npm install && npm run dev
+cd ui
+npm install
+npm run dev
 ```
 
 Open <http://localhost:5173> in a Chrome tab and leave it there.
@@ -274,13 +292,13 @@ ui/src/
 ## Commands
 
 ```bash
-python -m jarvis run          # start everything
-python -m jarvis doctor       # is it installed and permitted?
-python -m jarvis test all     # does it actually work? (see TESTING.md)
-python -m jarvis test stt     # one subsystem at a time
-python -m jarvis onboard      # re-run the setup conversation
-python -m jarvis say "hello"  # audition a voice
-python -m jarvis ask "..."    # one request through the agent, no microphone
+python -m jarvis run
+python -m jarvis doctor
+python -m jarvis test all
+python -m jarvis test stt
+python -m jarvis onboard
+python -m jarvis say "hello"
+python -m jarvis ask "what do I have due"
 ```
 
 **First time running it? Follow [TESTING.md](TESTING.md).** It brings the

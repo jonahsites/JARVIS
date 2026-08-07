@@ -54,8 +54,8 @@ python -c "import sounddevice as sd; print(sd.query_devices())"
 ## 3. Speech
 
 ```bash
-python -m jarvis test tts    # Kokoro says a line — check you like the voice
-python -m jarvis test stt    # you speak, it prints what it heard
+python -m jarvis test tts
+python -m jarvis test stt
 ```
 
 `test stt` also prints how far ahead of realtime it ran. Below about 3x on a
@@ -138,12 +138,19 @@ quit it** (⌘Q, not just the window) and reopen. macOS caches this per-process.
 
 ## 8. The whole thing
 
-```bash
-# terminal 1
-cd core && source .venv/bin/activate && python -m jarvis run -v
+Terminal 1:
 
-# terminal 2
-cd ui && npm run dev
+```bash
+cd core
+source .venv/bin/activate
+python -m jarvis run -v
+```
+
+Terminal 2:
+
+```bash
+cd ui
+npm run dev
 ```
 
 Open <http://localhost:5173> in Chrome.
@@ -221,6 +228,6 @@ tail -100 var/jarvis.log
 ## Resetting
 
 ```bash
-rm var/jarvis.db     # forget permissions, facts, observations, history
-rm var/notes.db      # force a full note re-crawl
+rm var/jarvis.db
+rm var/notes.db
 ```

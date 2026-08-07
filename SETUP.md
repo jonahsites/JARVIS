@@ -20,8 +20,8 @@ pip install of `sounddevice` succeeds but importing it fails at runtime.
 ## 2. The local model
 
 ```bash
-ollama serve            # leave running, or `brew services start ollama`
-ollama pull qwen3:8b    # ~5 GB
+ollama serve
+ollama pull qwen3:8b
 ```
 
 **On a MacBook Air, or any Mac with 16 GB or less, pull `qwen3:4b` instead**
