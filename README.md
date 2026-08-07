@@ -9,9 +9,9 @@ reply is generated on-device by default, and the speech is synthesised
 on-device. Nothing leaves the machine unless a request is complex enough to be
 escalated to OpenRouter.
 
-**Status: Phases 1–2 are built.** The voice loop, the UI, and Notion
-(assignments, notes search, A/B schedule) all work. Messages and LectureSynth
-are next — see [Roadmap](#roadmap).
+**Status: all four phases are built.** Voice loop, glob UI, Notion, Messages,
+autonomous proactivity, and the onboarding conversation. The one thing still
+outstanding is LectureSynth — see [Roadmap](#roadmap).
 
 ---
 
@@ -178,6 +178,55 @@ Neither title contains any of those words. The crawl is incremental — pages wh
 `last_edited_time` hasn't moved are skipped — and re-runs hourly, or on demand
 when you say *"re-scan my notes."*
 
+## Messages
+
+Reading is a read-only open of `~/Library/Messages/chat.db` (`immutable=1`, so
+JARVIS can't corrupt your history even mid-crash). Sending is AppleScript.
+Contact names resolve through Contacts.app and are cached.
+
+Sending works the way you asked — spoken, then sent, with a window to stop it:
+
+```
+JARVIS   "Texting Mom: running twenty minutes late."
+         ...3 seconds...
+you      "stop"     → nothing is sent
+silence            → it goes
+```
+
+Cancelling works three ways: saying stop, the button in the tab, or just saying
+"hey Jarvis" — if you're talking to it again, you clearly want its attention.
+
+## Proactivity
+
+You chose fully autonomous, so the design is **generous triggers, strict gates**.
+
+Triggers, in the order it cares about them: something overdue · due today and
+it's past 3pm · a class starting in 20 minutes with work due for it · a morning
+greeting with the day type · a big assignment hitting the day it should be
+started · 45 minutes in one app with something still due.
+
+Gates, all of which must pass: not already listening, thinking or speaking ·
+not in quiet hours · not in a call · under `max_per_hour` · not the same nudge
+inside its own cooldown. A nudge that fails a gate is dropped, not queued —
+arriving an hour late is worse than not arriving.
+
+## Onboarding
+
+First launch runs a three-minute conversation. Past the obvious questions, it
+**learns by watching**:
+
+```
+JARVIS  "Open whatever you use to write essays. I'm watching."
+you     (open Google Docs)
+JARVIS  "Got it — Google Docs."
+```
+
+It polls the frontmost app and active tab, notices what changed, and stores it.
+Six of those, so "open my essay doc" resolves without a guess. It also offers
+the permissions up front rather than interrupting you later. Everything is
+skippable, and it resumes where you left off. Re-run any time with
+`python -m jarvis onboard`.
+
 ## Speech recognition
 
 You specced `nvidia/canary-qwen-2.5b`. It's NeMo, built for CUDA, and it
@@ -207,8 +256,11 @@ core/jarvis/
   audio/             wake word, VAD, Parakeet, Kokoro, the loop, hotkey
   llm/               ollama, openrouter, the router, prompts
   agent/             tool loop, tool registry, the capability ledger
-  skills/            macOS control, A/B schedule, tool definitions
+  skills/            macOS control, A/B schedule, messages, observer, tools
   skills/notion/     REST client, note crawler + FTS index, assignments
+  skills/outbox.py   the spoken cancel window
+  proactive/         the autonomous nudge engine
+  onboarding.py      first-run conversation, incl. learning by demonstration
   memory/            local SQLite — tabs, apps, facts, history
   doctor.py          checks every dependency and permission
 
@@ -224,6 +276,7 @@ ui/src/
 ```bash
 python -m jarvis run          # start everything
 python -m jarvis doctor       # check deps, permissions, credentials
+python -m jarvis onboard      # re-run the setup conversation
 python -m jarvis say "hello"  # audition a voice
 python -m jarvis ask "..."    # one request through the agent, no microphone
 ```
@@ -237,13 +290,16 @@ and Chrome control, A/B schedule logic, doctor.
 note search, live class schedule from Courses, Days Off feeding the A/B
 rotation.
 
-**Phase 3 — Messages and LectureSynth.** iMessage read/send via `chat.db` and
-AppleScript. LectureSynth capture → auto-added assignments. *Still blocked on
-the LectureSynth API surface — your ngrok URL is unreachable from my build
-container, so I need the endpoints from you.*
+**Phase 3 — done.** iMessage read and send, with the spoken cancel window.
+Passive observation of apps and tabs.
 
-**Phase 4 — Proactivity and onboarding.** The autonomous daemon that speaks up
-unprompted, and the guided first-run that learns your projects and habits.
+**Phase 4 — done.** Autonomous proactivity, and the onboarding conversation
+that learns your apps by watching you open them.
+
+**Still outstanding — LectureSynth.** Your ngrok URL is blocked by my build
+container's network proxy, so I've never seen its API. Send me the endpoints
+(or point me at the source on your machine) and it plugs into the existing
+`add_assignment` path directly.
 
 ## Known limits
 
@@ -263,11 +319,16 @@ Tested here: the A/B rotation (alternation, weekends, days off, backwards from
 the anchor), the capability ledger (one prompt per capability across many
 arguments, persistence across restart, revoke and re-ask), note search over
 synthetic notes shaped like your real Calc tree, assignment priority ranking,
-course-name resolution (`calc`, `apes`, `gsa`, `gym` → the right course), tool
-schema serialisation for both LLM providers, graceful behaviour with no Notion
-token, config parsing, the UI typecheck and build, GLSL compilation, and all
-four glob states rendered through a fake daemon.
+course-name resolution (`calc`, `apes`, `gsa`, `gym` → the right course), the
+cancel window (sends when left alone, sends nothing when stopped, a second send
+replaces the first), the proactive gates (busy / quiet hours / in a call /
+hourly cap / per-nudge cooldown) and trigger ordering, `attributedBody`
+decoding in both length forms plus five malformed inputs, Apple's two timestamp
+encodings, tool schema serialisation for both LLM providers, graceful behaviour
+with no Notion token and no macOS, config parsing, the UI typecheck and build,
+GLSL compilation, and all four glob states rendered through a fake daemon.
 
 Not tested here: microphone capture, wake word, Qwen3-ASR, Kokoro, Ollama, the
-hotkey, AppleScript, and any real Notion API call — the token isn't set in the
-build container. Those need your machine.
+hotkey, AppleScript, real `chat.db` reads, and any real Notion API call — no
+mic, no macOS and no token in the build container. Those need your machine,
+which is what `jarvis doctor` is for.

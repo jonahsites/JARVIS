@@ -210,6 +210,24 @@ async def run_checks() -> int:
                 "Open Chrome, then approve the Automation prompt on first use",
             ))
 
+        # Messages needs Full Disk Access to read chat.db. Opening it is the
+        # only reliable test — the permission isn't queryable.
+        from .skills.messages import CHAT_DB, Messages
+
+        if not CHAT_DB.exists():
+            checks.append(Check("messages", WARN, "chat.db not found",
+                                "Only matters if you want JARVIS reading iMessages"))
+        else:
+            try:
+                await asyncio.to_thread(Messages()._connect().close)
+                checks.append(Check("messages", OK, "chat.db readable"))
+            except Exception:
+                checks.append(Check(
+                    "messages", WARN, "chat.db exists but can't be opened",
+                    "System Settings > Privacy & Security > Full Disk Access "
+                    "> add your terminal, then fully quit and reopen it",
+                ))
+
     # ---- ports -----------------------------------------------------------
 
     for label, port in [("bus port", secrets.jarvis_bus_port),

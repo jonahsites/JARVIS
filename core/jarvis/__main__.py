@@ -49,6 +49,27 @@ def say(text: str) -> None:
 
 
 @app.command()
+def onboard(
+    restart: bool = typer.Option(False, "--restart",
+                                 help="Start over instead of resuming."),
+) -> None:
+    """Run the setup conversation again — re-teach it your apps and routine."""
+    jlog.setup(False)
+    from .daemon import Daemon
+
+    async def _onboard() -> None:
+        daemon = Daemon(config, secrets)
+        await daemon.bus.start()
+        await daemon.pipeline.load()
+        daemon.pipeline.set_responder(daemon.agent.respond)
+        await daemon.pipeline.start()
+        await daemon.onboarding.run(restart=restart)
+        await daemon.stop()
+
+    asyncio.run(_onboard())
+
+
+@app.command()
 def ask(text: str) -> None:
     """Send one request through the agent and print the reply. No microphone."""
     jlog.setup(True)

@@ -71,6 +71,9 @@ class VoicePipeline:
         # When JARVIS asked *you* something, the next thing you say answers it
         # instead of starting a new request.
         self._awaiting_answer: asyncio.Future[str] | None = None
+        # Set by the daemon. Fires whenever you start talking to it, which is
+        # what lets the wake word cancel a queued message.
+        self.on_listen_start: Callable[[], object] | None = None
 
     def set_responder(self, responder: Responder) -> None:
         self._responder = responder
@@ -164,6 +167,8 @@ class VoicePipeline:
         # Talking over JARVIS cuts it off — same as interrupting a person.
         if self.tts.is_speaking:
             self.tts.stop()
+        if self.on_listen_start is not None:
+            self.on_listen_start()
         self.vad.reset()
         self.wake.reset()
         self._listening = True
@@ -200,11 +205,11 @@ class VoicePipeline:
         log.info("round trip %.0f ms", (time.monotonic() - started) * 1000)
         await self.say(reply)
 
-    async def ask_yes_no(self, question: str, timeout_s: float = 30.0) -> bool:
-        """Speak a question and wait for a spoken yes or no.
+    async def ask(self, question: str, timeout_s: float = 30.0) -> str:
+        """Speak a question and return what you say back.
 
-        This is what makes first-use permission prompts answerable out loud
-        instead of forcing you to look at the tab and click.
+        The next utterance answers the question instead of starting a new
+        request — that's what `_awaiting_answer` in `_handle` is for.
         """
         await self.say(question)
 
@@ -213,15 +218,22 @@ class VoicePipeline:
         await self.begin_listening()
 
         try:
-            answer = await asyncio.wait_for(future, timeout=timeout_s)
+            return await asyncio.wait_for(future, timeout=timeout_s)
         except asyncio.TimeoutError:
-            log.info("no spoken answer — treating as no")
-            return False
+            log.info("no spoken answer to %r", question[:40])
+            return ""
         finally:
             self._awaiting_answer = None
+            self._listening = False
             await self._state.transition(AgentState.IDLE)
 
-        return _is_yes(answer)
+    async def ask_yes_no(self, question: str, timeout_s: float = 30.0) -> bool:
+        """Anything not clearly affirmative is a no — the safe default.
+
+        This is what makes first-use permission prompts answerable out loud
+        instead of forcing you to look at the tab and click.
+        """
+        return _is_yes(await self.ask(question, timeout_s))
 
     async def say(self, text: str) -> None:
         """Speak, then return to idle. The only path from text to your speakers."""

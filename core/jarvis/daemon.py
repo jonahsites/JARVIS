@@ -17,10 +17,16 @@ from .llm.openrouter_client import OpenRouterClient
 from .llm.prompts import context_block
 from .llm.router import Router
 from .memory.db import Memory
+from .onboarding import Onboarding
+from .proactive.engine import ProactiveEngine
+from .skills.message_tools import register_messages
+from .skills.messages import Messages
 from .skills.notion.assignments import Assignments
 from .skills.notion.client import NotionClient
 from .skills.notion.notes import NoteCrawler, NoteIndex
 from .skills.notion.tools import register_notion
+from .skills.observer import Observer
+from .skills.outbox import Outbox
 from .skills.schedule import ScheduleResolver
 from .skills.tools import register_all
 from .state import AgentState, StateMachine
@@ -45,6 +51,10 @@ class Daemon:
         self.notes = NoteIndex()
         self.crawler = NoteCrawler(self.notion, self.notes)
 
+        self.messages = Messages(config.messages.blocklist)
+        self.outbox = Outbox(self.bus, config.messages.cancel_window_s)
+        self.observer = Observer(self.memory, config.memory)
+
         self.router = Router(
             OllamaClient(secrets.ollama_host, secrets.ollama_model,
                          config.llm.local_timeout_s),
@@ -58,7 +68,21 @@ class Daemon:
                            self._build_context)
         self.hotkey = GlobalHotkey(config.voice.hotkey, self._on_hotkey)
 
+        self.proactive = ProactiveEngine(
+            config=config.proactive, state=self.state, memory=self.memory,
+            schedule=self.schedule, observer=self.observer,
+            speak=self.pipeline.say,
+            assignments_provider=lambda: self._open_assignments,
+        )
+
+        self.onboarding = Onboarding(
+            memory=self.memory, ledger=self.ledger,
+            speak=self.pipeline.say, ask=self.pipeline.ask,
+            ask_yes_no=self.pipeline.ask_yes_no,
+        )
+
         self._due_soon: list[str] = []
+        self._open_assignments: list = []
         self._tasks: list[asyncio.Task] = []
 
     # ---- glue ------------------------------------------------------------
@@ -103,10 +127,17 @@ class Daemon:
             self.schedule.set_days_off(await self.assignments.days_off())
 
             today = self.schedule.now().date()
+            self._open_assignments = await self.assignments.open_assignments()
             upcoming = await self.assignments.upcoming(today=today, limit=8)
             self._due_soon = [a.spoken(today) for a in upcoming]
-            log.info("notion refreshed — %d courses, %d due soon",
-                     len(self.assignments.courses), len(self._due_soon))
+
+            # The proactive engine needs course rows to know when a class is
+            # about to start.
+            self.proactive.set_courses([c.as_dict() for c in self.assignments.courses])
+
+            log.info("notion refreshed — %d courses, %d open, %d due soon",
+                     len(self.assignments.courses), len(self._open_assignments),
+                     len(self._due_soon))
         except Exception:
             log.exception("notion refresh failed")
 
@@ -132,8 +163,9 @@ class Daemon:
         await self.pipeline.begin_listening()
 
     async def _on_cancel(self, _: Event) -> None:
-        """Cuts speech immediately — backs the 3-second message cancel window."""
+        """Stop talking, and stop anything queued to go out."""
         self.pipeline.tts.stop()
+        self.outbox.cancel()
 
     async def _on_text_input(self, event: Event) -> None:
         """Typed input from the UI. Same path as speech, minus STT."""
@@ -155,7 +187,13 @@ class Daemon:
         register_all(self.registry, self.memory, self.schedule, self.ledger)
         register_notion(self.registry, self.assignments, self.notes,
                         self.crawler, self.schedule)
+        register_messages(self.registry, self.messages, self.outbox,
+                          self.pipeline.say)
         log.info("%d tools registered", len(self.registry.names()))
+
+        # Talking to it means you want its attention — that cancels a queued
+        # send just as surely as saying "stop".
+        self.pipeline.on_listen_start = self.outbox.cancel
 
         # First-use permission prompts are spoken and answerable out loud.
         self.ledger.ask_aloud = self.pipeline.ask_yes_no
@@ -188,10 +226,31 @@ class Daemon:
             self._tasks.append(asyncio.create_task(self._crawl_loop()))
             self._tasks.append(asyncio.create_task(self._notion_loop()))
 
+        if self.config.memory.observe_apps or self.config.memory.observe_tabs:
+            self._tasks.append(asyncio.create_task(self.observer.run()))
+
+        if self.config.proactive.enabled:
+            self._tasks.append(asyncio.create_task(self.proactive.run()))
+            log.info("proactive on — up to %d/hour, quiet %s to %s",
+                     self.config.proactive.max_per_hour,
+                     *self.config.proactive.quiet_hours)
+
         log.info(
             "JARVIS is up. Say \"hey Jarvis\" or press %s. UI at http://localhost:5173",
             self.config.voice.hotkey,
         )
+
+        if not self.onboarding.complete:
+            # Not awaited — onboarding is a long conversation, and start()
+            # returning is what lets the wake word work during it.
+            self._tasks.append(asyncio.create_task(self._first_run()))
+
+    async def _first_run(self) -> None:
+        await asyncio.sleep(2)  # let the UI connect so you can see it react
+        await self.pipeline.say(
+            "Hey — first time running, so let me get to know you a bit."
+        )
+        await self.onboarding.run()
 
     async def stop(self) -> None:
         for task in self._tasks:

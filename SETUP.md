@@ -102,6 +102,10 @@ Open <http://localhost:5173> in Chrome and leave the tab open.
 
 Say **"hey Jarvis"**, wait for the glob to go green, then talk.
 
+On the very first run it starts a short setup conversation — it asks a few
+things, then tells you to open some apps so it can learn which ones you use for
+what. Say *"skip"* to any of it. Re-run later with `python -m jarvis onboard`.
+
 ---
 
 ## The one thing to check on day one
@@ -141,6 +145,16 @@ you're naming this after.
 
 **Replies are too chatty** → set `style = "terse"`.
 
+**It interrupts too much** → lower `max_per_hour` (default 4), widen
+`quiet_hours`, or add apps to `focus_apps` so it stays quiet while you're in
+them. `enabled = false` turns proactivity off entirely.
+
+**It's too quiet** → raise `max_per_hour`. Every decision to stay quiet is
+logged at debug level, so `python -m jarvis run -v` shows you exactly which
+gate is stopping it.
+
+**Messages send too fast to stop** → raise `cancel_window_s` (default 3.0).
+
 **Transcription is wrong on names** → try `qwen_model = "Qwen/Qwen3-ASR-1.7B"`
 (1.99% WER, 3.4 GB), or `stt_engine = "whisper"`, which is slower but handles
 proper nouns well.
@@ -177,6 +191,14 @@ port 8765. `lsof -i :8765`, and change `JARVIS_BUS_PORT` in `.env` if needed.
 **Everything is slow** — check whether it's escalating to OpenRouter on
 everything. `python -m jarvis run -v` logs `routing to local` or
 `routing to cloud` for each request.
+
+**Messages says it can't read chat.db** — Full Disk Access, granted to your
+terminal, then **fully quit it** (⌘Q) and reopen. macOS caches this per-process
+and won't pick it up otherwise.
+
+**It texted the wrong person** — the name came back from Contacts.app. Check
+`resolve_contact` matched what you expected, and add anyone it should never
+text to `blocklist` in `config.toml`.
 
 ---
 
